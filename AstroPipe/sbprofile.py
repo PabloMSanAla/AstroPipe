@@ -600,8 +600,11 @@ def break_estimation(radius, mu, rms, skyrms=0,
     rbr = np.array([rbr1,rbr2,rbr3,
                     rbr1_up,rbr2_up,rbr3_up,
                     rbr1_down,rbr2_down,rbr3_down])
+    if any(rbr>0):
+        kmeans = KMeans(n_clusters=3)
+        kmeans.fit(rbr[rbr>0].reshape(-1,1))
+        centers = kmeans.cluster_centers_
+    else:
+        centers = [-999,-999,-999]
 
-    kmeans = KMeans(n_clusters=3)
-    kmeans.fit(rbr[rbr>0].reshape(-1,1))
-
-    return kmeans.cluster_centers_
+    return centers

@@ -79,6 +79,7 @@ Thumbs.db
 # Especific files #
 ###################
 *test.py
+*tests.py
 *.sh
 *.fits
 Tests/*

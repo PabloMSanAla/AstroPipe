@@ -240,12 +240,24 @@ profile_fix = new_profile_fix
 profile_rec = new_profile_rec
 
 #%% Break Finding 
+import pandas as pd 
+
+file = '/users/pmsa/Documents/PhD/Projects/AMIGA/Breaks_stats_radius.csv'
 
 breaks = break_estimation(profile['radius'],profile['surface_brightness'],
             rms=img.bkg, skyrms=img.bkg, rin=20,rout=150,
             zp=img.zp, pixel_scale=img.pixel_scale)
 
-radial_break = breaks
+
+breaks = pd.read_csv(file,delimiter=';')
+
+radial_break = breaks['Radius'][int(np.argwhere(
+                    np.array(breaks['Galaxy'].str.contains(
+                    img.name.split('_')[0]))))]
+
+if np.isnan(radial_break):
+    radial_break = -999
+
 #%% PLOTTING
 ut.check_print('Plotting Profile...')
 import matplotlib
