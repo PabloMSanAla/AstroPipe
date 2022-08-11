@@ -1,0 +1,10 @@
+matplotlib
+numpy
+scipy
+astropy 
+photutils
+regions
+astroquery
+lmfit
+termcolor
+opencv-python
