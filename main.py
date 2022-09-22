@@ -1,7 +1,7 @@
 #%%
 
 
-from AstroPipe.classes import image,SExtractor,AstroGNU,directories
+from AstroPipe.classes import Image,SExtractor,AstroGNU,Directories
 from AstroPipe.masking import automatic_mask, ds9_region_masking
 from AstroPipe.plotting import plot_ellipses 
 import AstroPipe.utilities as ut 
@@ -32,24 +32,33 @@ from astropy.visualization import ImageNormalize, LogStretch
 
 
 ''' Initialize images to process'''
+
+
 path = '/Volumes/G-Drive/PhD/Data/AMIGAS'
+objects_file = '/Users/pmsa/Documents/PhD/Projects/AMIGA/Objects.fits'
+
+
 # path = '/scratch/pmsa/AMIGAS'
+# path = '/Users/pmsa/Documents/PhD/Projects/AMIGA/RAW/'
 
 # index =  ut.make_parser().parse_args().index
 # index = 0
 
 
-objects = Table.read(os.path.join(path,'Objects.fits'))
-index = np.where(objects['Galaxy']=='CIG340')[0][0]
+objects = Table.read(objects_file)
+index = np.where(objects['Galaxy']=='CIG744')[0][0]
 
 object_name = objects['Galaxy'][index].strip()
 file = glob.glob(os.path.join(path,object_name,f'{object_name}*.fit*'))[0]
+
+# file = glob.glob(os.path.join(path,f'{object_name}*.fit*'))[0]
+
 hdu = np.where(np.array([len(i.shape) for i in fits.open(file)])!=0)[0][0]
 
 ut.check_print(f'Processing {file}...')
 
 file_extension = file.split('.')[-1]
-folders = directories(object_name,path=os.path.dirname(file))
+folders = Directories(object_name,path=os.path.dirname(file))
 folders.set_regions('/Volumes/G-Drive/PhD/Data/AMIGAS/Regions/')
 
 
@@ -57,7 +66,7 @@ AstroPipe_steps = ['SExtractor','NoiseChisel', 'ds9' , 'FABADA','Photometry_fit'
                     'Photometry_man','Save']
 
 
-img = image(file, hdu=hdu, zp=objects['Zero_point'][index])
+img = Image(file, hdu=hdu, zp=objects['Zero_point'][index])
 
 
 
@@ -189,15 +198,14 @@ if not os.path.exists(folders.profile):
 
     profile = isophotal_photometry(img,r_eff=ut.kpc_to_arcsec(10,distance)/img.pixel_scale,
                         zp=img.zp,
-                        max_r=ut.kpc_to_arcsec(200,distance)/img.pixel_scale,
+                        max_r=ut.kpc_to_arcsec(35,distance)/img.pixel_scale,
                         plot=True,save=folders,fix_center=True)
 
-    morph_index = np.where(np.isfinite(profile['surface_brightness']))[0][-1]
-    morph_index = ut.closest(profile['radius'],profile['radius'][morph_index]/2)
-
+    morph_index = np.where((profile['radius']>ut.kpc_to_arcsec(5,distance))&(
+                            (profile['radius']<ut.kpc_to_arcsec(20,distance))))
     
-    img.set_morphology(pa=profile['pa'][morph_index].value,
-                    eps=profile['ellipticity'][morph_index])
+    img.set_morphology(pa=np.mean(profile['pa'][morph_index].value),
+                    eps=np.mean(profile['ellipticity'][morph_index]))
     ut.check_print(f'Morphology uptdated pa={img.pa} eps={img.eps}')
 
     profile_fix = isophotal_photometry_fix(img,zp=img.zp,
@@ -242,10 +250,14 @@ profile_rec = new_profile_rec
 #%% Break Finding 
 import pandas as pd 
 
-file = '/users/pmsa/Documents/PhD/Projects/AMIGA/Breaks_stats_radius.csv'
+file = '/Users/pmsa/Documents/PhD/Projects/AMIGA/Breaks_stats_radius.csv'
 
-breaks = break_estimation(profile['radius'],profile['surface_brightness'],
-            rms=img.bkg, skyrms=img.bkg, rin=20,rout=150,
+
+
+rin = profile['radius'][np.where(profile['surface_brightness']>22)[0][0]]
+rout = profile['radius'][np.where(profile['surface_brightness']>26)[0][0]]
+auto_breaks = break_estimation(profile['radius'],profile['surface_brightness'],
+            rms=img.bkg, skyrms=img.bkg, rin=rin,rout=rout,
             zp=img.zp, pixel_scale=img.pixel_scale)
 
 
@@ -253,150 +265,166 @@ breaks = pd.read_csv(file,delimiter=';')
 
 radial_break = breaks['Radius'][int(np.argwhere(
                     np.array(breaks['Galaxy'].str.contains(
-                    img.name.split('_')[0]))))]
+                    img.name.split('_')[0])))[0])]
 
 if np.isnan(radial_break):
     radial_break = -999
 
 #%% PLOTTING
-ut.check_print('Plotting Profile...')
-import matplotlib
-# from AstroPipe.plotting import plot_ellipses
-from astropy.table import Table
+
+for i in range(2):
+    ut.check_print('Plotting Profile...')
+    import matplotlib
+    # from AstroPipe.plotting import plot_ellipses
+    from astropy.table import Table
 
 
-save_fig = True
-extent = np.array([-img.pix[0],img.data.shape[1]-img.pix[0],
-        -img.pix[1],img.data.shape[0]-img.pix[1]])
-extent *= img.pixel_scale
+    save_fig = True
+    extent = np.array([-img.pix[0],img.data.shape[1]-img.pix[0],
+            -img.pix[1],img.data.shape[0]-img.pix[1]])
+    extent *= img.pixel_scale
 
 
-# trunc_arg = aaron_break_finder(profile['radius'].value,profile['surface_brightness'].value)
-trunc_arg = [ut.closest(profile['radius'],radial_break)]
-trunc_aper = patches.Ellipse((0,0),
-                2*profile['radius'][trunc_arg[0]],
-                2*(profile['radius'][trunc_arg[0]] * (1 - profile['ellipticity'][trunc_arg[0]])),
-                profile['pa'][trunc_arg[0]],
-                color='darkorange',alpha=0.8,fill=False,lw=1)
+    # trunc_arg = aaron_break_finder(profile['radius'].value,profile['surface_brightness'].value)
+    trunc_arg = [ut.closest(profile['radius'],radial_break)]
+    trunc_aper = patches.Ellipse((0,0),
+                    2*profile['radius'][trunc_arg[0]],
+                    2*(profile['radius'][trunc_arg[0]] * (1 - profile['ellipticity'][trunc_arg[0]])),
+                    profile['pa'][trunc_arg[0]],
+                    color='darkorange',alpha=0.8,fill=False,lw=1)
 
-fig = plt.figure(figsize=(11.5,4))
-ax1 = plt.subplot2grid((5,3),(0,0),rowspan=5)
-ax1_2 = plt.subplot2grid((5,3),(0,1),rowspan=5)
-ax2 = plt.subplot2grid((5,3),(0,2),rowspan=3)
-ax4 = plt.subplot2grid((5,3),(3,2),rowspan=1,sharex=ax2)
-ax5 = plt.subplot2grid((5,3),(4,2),rowspan=1,sharex=ax2)
+    fig = plt.figure(figsize=(11.5,4))
+    ax1 = plt.subplot2grid((5,3),(0,0),rowspan=5)
+    ax1_2 = plt.subplot2grid((5,3),(0,1),rowspan=5)
+    ax2 = plt.subplot2grid((5,3),(0,2),rowspan=3)
+    ax4 = plt.subplot2grid((5,3),(3,2),rowspan=1,sharex=ax2)
+    ax5 = plt.subplot2grid((5,3),(4,2),rowspan=1,sharex=ax2)
 
-kwargs = {'origin':'lower','cmap':'nipy_spectral',
-          'extent':extent,'interpolation':'none',
-          'vmin':19,'vmax':28.5}
-fontsize=11
+    mu_image = img.counts_to_mu(img.data.data - img.bkg)
+    kwargs = {'origin':'lower','cmap':'nipy_spectral',
+            'extent':extent,'interpolation':'none',
+            'vmin':profile['surface_brightness'][~np.isnan(profile['surface_brightness'])][0],
+            #   'vmax':np.nanpercentile(mu_image,90)}
+            'vmax':28}
+    fontsize=11
 
-fig.suptitle(img.name,fontsize=15)
+    transparent = matplotlib.colors.colorConverter.to_rgba('white',alpha = 0)
+    gray = matplotlib.colors.colorConverter.to_rgba('black',alpha = 0.4)
+    cmap = matplotlib.colors.ListedColormap([transparent, gray])
 
-transparent = matplotlib.colors.colorConverter.to_rgba('white',alpha = 0)
-gray = matplotlib.colors.colorConverter.to_rgba('black',alpha = 0.4)
-cmap = matplotlib.colors.ListedColormap([transparent, gray])
+    ax1.imshow(mu_image, **kwargs)
+    # ax1.imshow(img.data.mask, origin='lower',
+    #             cmap=cmap,extent=extent)
 
-ax1.imshow(img.counts_to_mu(img.data.data - img.bkg), **kwargs)
-ax1.imshow(img.data.mask, origin='lower',
-            cmap=cmap,extent=extent)
+    ax1.set_xlabel('distance $[arcsec]$',fontsize=fontsize,labelpad=-1)
+    ax1.set_ylabel('distance $[arcsec]$',fontsize=fontsize,labelpad=-2)
 
-ax1.set_xlabel('distance $[arcsec]$',fontsize=fontsize,labelpad=-1)
-ax1.set_ylabel('distance $[arcsec]$',fontsize=fontsize,labelpad=-2)
+    ax1.text(0.99,1.05,img.name.split('_')[0],fontsize=13,
+    transform = ax1.transAxes,ha='right',va='top',fontweight='bold')
 
-im = ax1_2.imshow(img.counts_to_mu(img.data.data - img.bkg), **kwargs)
-ax1_2.imshow(img.data.mask, origin='lower',
-            cmap=cmap,extent=extent)
+    im = ax1_2.imshow(img.counts_to_mu(img.data.data - img.bkg), **kwargs)
+    ax1_2.imshow(img.data.mask, origin='lower',
+                cmap=cmap,extent=extent)
 
-ax1_2 = plot_ellipses(profile, ax=ax1_2, max_r=180, step=5,lw=0.4,alpha=0.9)
-ax1_2.set_xlabel('distance $[arcsec]$',fontsize=fontsize,labelpad=-1)
-ax1_2.set_yticklabels([])
-ax1_2.add_patch(trunc_aper)
+    ax1_2.set_xlabel('distance $[arcsec]$',fontsize=fontsize,labelpad=-1)
+    ax1_2.set_yticklabels([])
+    ax1_2.add_patch(trunc_aper)
 
+    if i==1:
+        ax2.plot(profile_fix['radius'],profile_fix['surface_brightness'],'g-',label='Elliptical_f')
+        ax2.fill_between(profile_fix['radius'],profile_fix['surface_brightness']+profile_fix['sb_err_upper'],
+                        profile_fix['surface_brightness']-profile_fix['sb_err_low'],color='g',alpha=0.5)
 
-ax2.plot(profile_fix['radius'],profile_fix['surface_brightness'],'g-',label='Ellip-Aper')
-ax2.fill_between(profile_fix['radius'],profile_fix['surface_brightness']+profile_fix['sb_err_upper'],
-                profile_fix['surface_brightness']-profile_fix['sb_err_low'],color='g',alpha=0.5)
+        ax2.plot(profile_rec['radius'],profile_rec['surface_brightness'],'c-',label='Rectangula_f')
+        ax2.fill_between(profile_rec['radius'],profile_rec['surface_brightness']+profile_rec['sb_err_upper'],
+                        profile_rec['surface_brightness']-profile_rec['sb_err_low'],color='c',alpha=0.5)
 
-ax2.plot(profile_rec['radius'],profile_rec['surface_brightness'],'c-',label='Rect-Aper')
-ax2.fill_between(profile_rec['radius'],profile_rec['surface_brightness']+profile_rec['sb_err_upper'],
-                profile_rec['surface_brightness']-profile_rec['sb_err_low'],color='c',alpha=0.5)
+    ax2.plot(profile['radius'],profile['surface_brightness'],'r-',label='Elliptical_v')
+    ax2.fill_between(profile['radius'], 
+            profile['surface_brightness'] - profile['sb_err_low'],
+            profile['surface_brightness'] + profile['sb_err_upper'],
+            alpha=0.4,color='r')
 
-ax2.plot(profile['radius'],profile['surface_brightness'],'r-',label='Astropy')
-ax2.fill_between(profile['radius'], 
-        profile['surface_brightness'] - profile['sb_err_low'],
-        profile['surface_brightness'] + profile['sb_err_upper'],
-        alpha=0.4,color='r')
+    if radial_break != -999:
+        ax2.axvline(profile['radius'][trunc_arg],color='darkorange',ls=':',label='Break')
 
-for arg in trunc_arg:
-    ax2.axvline(profile['radius'][arg],color='darkorange',ls=':',label='Break')
+    if i==1:
+        ax2.legend(fontsize=8,loc='upper right')
 
-ax2.set_ylabel('$\mu [mag*arcsec^{-2}]$',fontsize=fontsize,labelpad=-1)
-ax2.legend(fontsize=10)
-ax2.invert_yaxis()
+    ax2.set_ylabel('$\mu [mag*arcsec^{-2}]$',fontsize=fontsize,labelpad=3)
+    ax2.invert_yaxis()
 
-ax2.set_ylim([np.nanmax([np.nanmax(profile['surface_brightness']),img.maglim+1.5]),
-    np.nanmin(profile['surface_brightness'])-0.5])
-ax2.set_xlim([-10,profile['radius'][ut.closest(profile['surface_brightness'],ax2.get_ylim()[0])]+10])
-
-
-bar_ax = ax2.inset_axes([ -7, kwargs['vmin'], 6, kwargs['vmax']-kwargs['vmin']],
-            transform=ax2.transData)
-bar = fig.colorbar(im, cax=bar_ax)
-bar_ax.axis('off')
-bar_ax.invert_yaxis()
-
-
-ax4.plot(profile['radius'],profile['pa'],'r-')
-ax4.axhline(img.pa,c='indianred',ls=':')
-ax4.set_ylabel('PA [deg]',fontsize=fontsize-1,labelpad=-1)
-
-ax5.plot(profile['radius'],profile['ellipticity'],'r-')
-ax5.axhline(img.eps,c='indianred',ls=':')
-ax5.set_ylabel('Eps',fontsize=fontsize-1,labelpad=-1)
-ax5.set_xlabel('R [$arcsec$]',fontsize=fontsize,labelpad=-1)    
+    ax2.set_ylim([np.nanmax([np.nanmax(profile['surface_brightness']),img.maglim+1.5]),
+        np.nanmin(profile['surface_brightness'])-0.5])
+    # ax2.set_xlim([-10,profile['radius'][ut.closest(profile['surface_brightness'],ax2.get_ylim()[0])]+10])
+    x_lim = ut.limits(profile['radius'],profile['surface_brightness'])
 
 
-ax6 = ax2.twiny()
+    ax4.plot(profile['radius'],profile['pa'],'r-')
+    ax4.axhline(img.pa,c='indianred',ls=':')
+    ax4.set_ylabel('PA [deg]',fontsize=fontsize-1,labelpad=3)
 
-ax6.plot(profile['radius']*np.pi*distance/(3600*180),
-        profile['surface_brightness'],alpha=0)
-ax6.set_xlabel('Radius [kpc]',fontsize=fontsize-1,labelpad=2)
+    ax5.plot(profile['radius'],profile['ellipticity'],'r-')
+    ax5.axhline(img.eps,c='indianred',ls=':')
+    ax5.set_ylabel('Eps',fontsize=fontsize-1,labelpad=3)
+    ax5.set_xlabel('R [$arcsec$]',fontsize=fontsize,labelpad=-1)    
+
+    ax6 = ax2.twiny()
+
+    ax6.plot(profile['radius']*np.pi*distance/(3600*180),
+            profile['surface_brightness'],alpha=0)
+    ax6.set_xlabel('Radius [kpc]',fontsize=fontsize-1,labelpad=2)
 
 
-ax1.set_xlim([-round(ax2.get_xlim()[1]/10+1)*10,round(ax2.get_xlim()[1]/10+1)*10])
-ax1.set_ylim([-round(ax2.get_xlim()[1]/10+1)*10,round(ax2.get_xlim()[1]/10+1)*10])
-ax1_2.set_xlim([-round(ax2.get_xlim()[1]/10+1)*10,round(ax2.get_xlim()[1]/10+1)*10])
-ax1_2.set_ylim([-round(ax2.get_xlim()[1]/10+1)*10,round(ax2.get_xlim()[1]/10+1)*10])
+    x_lim = np.array(ax2.get_xlim())
+    if x_lim[1]>200: x_lim[1] = 110
 
-for ax in [ax2,ax4,ax5]:
-    ax.yaxis.set_label_position("right")
-    ax.yaxis.set_ticks_position("right")
-    ax.yaxis.set_ticks_position('both')
-    ax.yaxis.set_tick_params(labelsize=10)
+    x_lim[1] = 160
 
-for ax in [ax2, ax4]:
-    plt.setp(ax.get_xticklabels(), visible=False)
-    ax.set_yticks(ax.get_yticks()[1:]) 
+    ax1.set_xlim([-round(x_lim[1]/10+1)*10,round(x_lim[1]/10+1)*10])
+    ax1.set_ylim([-round(x_lim[1]/10+1)*10,round(x_lim[1]/10+1)*10])
+    ax1_2.set_xlim([-round(x_lim[1]/10+1)*10,round(x_lim[1]/10+1)*10])
+    ax1_2.set_ylim([-round(x_lim[1]/10+1)*10,round(x_lim[1]/10+1)*10])
+    ax2.set_xlim([-0.13*x_lim[1],x_lim[1]])
+    ax6.set_xlim(np.multiply(ax2.get_xlim(),np.pi*distance/(3600*180)))
 
-for ax in (ax1,ax1_2,ax2,ax4,ax5,ax6):
-    ax.yaxis.set_tick_params(labelsize=10)
-    ax.xaxis.set_tick_params(labelsize=10)
+    ax1_2 = plot_ellipses(profile, ax=ax1_2, max_r=x_lim[1]*1.1, step=5,lw=0.6,alpha=0.9)
 
-plt.subplots_adjust(top=0.895,
-bottom=0.1,
-left=0.035,
-right=0.95,
-hspace=0.3,
-wspace=0.0)
 
-# plt.tight_layout()
+    bar_ax = ax2.inset_axes([-0.07*x_lim[1], kwargs['vmin'], 0.05*x_lim[1], kwargs['vmax']-kwargs['vmin']],
+                transform=ax2.transData)
+    bar = fig.colorbar(im, cax=bar_ax)
+    bar_ax.axis('off')
+    bar_ax.invert_yaxis()
 
-if save_fig:
-    fig.savefig(os.path.join(folders.out,object_name+'_photometry.jpg'),dpi=200)
+    for ax in [ax2,ax4,ax5]:
+        ax.yaxis.set_label_position("right")
+        ax.yaxis.set_ticks_position("right")
+        ax.yaxis.set_ticks_position('both')
+        ax.yaxis.set_tick_params(labelsize=8)
 
-x_lim = ax2.get_xlim()
-plt.show()
+    for ax in [ax2, ax4]:
+        plt.setp(ax.get_xticklabels(), visible=False)
+        ax.set_yticks(ax.get_yticks()[1:]) 
+
+    for ax in (ax1,ax1_2,ax2,ax4,ax5,ax6):
+        ax.yaxis.set_tick_params(labelsize=10)
+        ax.xaxis.set_tick_params(labelsize=10)
+
+    plt.subplots_adjust(top=0.915,
+    bottom=0.09,
+    left=0.045,
+    right=0.95,
+    hspace=0.3,
+    wspace=0.0)
+
+    # plt.tight_layout()
+
+    if save_fig:
+        fig.savefig(os.path.join(folders.out,object_name+'_photometry'+'_all'*i+'.jpg'),dpi=300)
+
+
+    plt.show()
 #%% Aaron Watkins Break Finder
 '''
 from scipy import stats

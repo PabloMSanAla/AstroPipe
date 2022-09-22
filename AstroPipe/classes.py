@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import matplotlib
 import os
+import subprocess
 
 from lmfit.models import GaussianModel
 
@@ -29,7 +30,14 @@ sys.path.append('/Users/pmsa/.local/lib/python3.8/site-packages/sewpy')
 import sewpy
 
 
-class image:
+class Image:
+    '''
+    Image class to work with astronomical images.
+    To initiate the image class we need:
+    - filename: the name of the fits file
+    - hdu: (default 0) the hdu of the fits file
+    - zp: (default 22.5) the zeropoint of the image    
+    '''
     def __init__(self, filename, hdu=0, zp=22.5):
 
         self.data = fits.getdata(filename, hdu)
@@ -164,6 +172,8 @@ class image:
         self.maglim = mag_lim
         self.std = self.mu_to_counts(self.maglim)
     
+    def set_extinction(self,Av):
+        self.Av = Av
     
     def counts_to_mu(self,counts):
         return self.zp -2.5*np.log10(counts/self.pixel_scale**2)
@@ -173,6 +183,19 @@ class image:
 
 
 class SExtractor:
+    '''
+    Class to run SExtractor on a FITS image.
+    
+    To run SExtractor: 
+        (1st) You need to have it installed on your computer
+    
+    This class lets you create an instance of SExtractor with 
+    the parameters you set.
+
+    Then, you run the class on a FITS image and it returns the 
+    segmentation map and catalog from SExtractor.
+    '''
+
     def __init__(self, params=None, config=None):
 
         self.files_default = {
@@ -241,7 +264,7 @@ class SExtractor:
         self.cat = Table.read(file, format='ascii.sextractor')
 
 class AstroGNU():
-    def __init__(self, data, hdu=0, dir=''):
+    def __init__(self, data, hdu=0, dir='', loc='/opt/local/bin/'):
         if type(data) == str:
             self.file = data
         else:
@@ -255,7 +278,7 @@ class AstroGNU():
         self.hdu = hdu
         self.extension = self.file.split('.')[-1]
         self.name = os.path.basename(self.file).split('.')[-2]
-
+        self.loc = loc
         self.method = 'AstroGNU'
 
     def noisechisel(self,config=''):
@@ -264,9 +287,11 @@ class AstroGNU():
         
         self.nc_config = config
         self.nc_cmd = f'astnoisechisel {self.file} -h{self.hdu} {self.nc_config} -o{self.nc_file} -q'
-                
+        self.nc_cmd = os.path.join(self.loc,self.nc_cmd)
 
         os.system(self.nc_cmd)
+        # ncSub = subprocess.Popen(self.nc_cmd)
+        # ncSub.wait()
         self.detections = fits.getdata(self.nc_file,'DETECTIONS')
         self.background = np.nanmean(fits.getdata(self.nc_file,'SKY'))
     
@@ -276,8 +301,9 @@ class AstroGNU():
                             self.name+'_seg.fits')
 
         self.seg_config = config
-        
-        os.system(f'astsegment {self.nc_file} {self.seg_config} -o{self.seg_file} -q')
+        self.seg_cmd = f'astsegment {self.nc_file} {self.seg_config} -o{self.seg_file} -q'
+        self.seg_cmd = os.path.join(self.loc,self.seg_cmd)
+        os.system(self.seg_cmd)
 
         self.objects = fits.getdata(self.seg_file,'OBJECTS')
         
@@ -287,8 +313,11 @@ class AstroGNU():
     def make_catalog(self,config='',params='',fracmax=0.05,zp=22.5):
         self.cat_file = os.path.join(self.directory,self.name+'_nc.fits')
         self.mkc_config = config
-        os.system(f'astmkcatalog -irdmGnABp --fwhm --fracmaxradius1 --fracmax={fracmax} '
-                    f' {self.mkc_config} --zeropoint={zp} {self.seg_file} -o{self.cat_file} -q')
+        self.mkc_cmd = f'astmkcatalog -irdmGnABp --fwhm --fracmaxradius1 --fracmax={fracmax} '
+        self.mkc_cmd += f' {self.mkc_config} --zeropoint={zp} {self.seg_file} -o{self.cat_file} -q'
+        self.mkc_cmd = os.path.join(self.loc,self.mkc_cmd)
+        
+        os.system(self.mkc_cmd)
                 
         self.catalog = Table.read(self.cat_file)
 
@@ -299,7 +328,7 @@ class AstroGNU():
         
 
 
-class directories():
+class Directories():
     def __init__(self, name, path=None):
         if not path: path = os.path.dirname(name)
         self.out = os.path.join(path,'AstroPipe_'+name)

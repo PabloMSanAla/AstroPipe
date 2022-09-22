@@ -11,6 +11,7 @@ from math import gamma
 from astropy.wcs import WCS
 from astropy.io import fits
 
+from scipy.signal import argrelextrema
 
 from photutils.centroids import centroid_com, centroid_quadratic, centroid_2dg
 
@@ -37,6 +38,10 @@ def redshift_to_kpc(redshift,H0=70* u.km / u.s / u.Mpc,
 def kpc_to_arcsec(kpc,distance):
     arcsec_to_rad = np.pi/(180*3600)
     return (kpc)/(arcsec_to_rad*distance)
+
+def arcsec_to_kpc(arcsec,distance):
+    arcsec_to_rad = np.pi/(180*3600)
+    return arcsec*arcsec_to_rad*distance
 
 def convert_PA(angle):
     if angle <0:
@@ -124,6 +129,14 @@ def find_center(IMG,r_eff=20):
     y += np.int32(IMG.pix[1]-r_eff)
     return x,y
 
+
+
+def limits(x,y,n=30):
+    index = ~np.isnan(y)    
+    p = np.poly1d(np.polyfit(x[index],y[index],n))
+    mins = argrelextrema(p(x), np.greater)
+    return np.nanmin(mins)
+
 def adaptive_histogram(data, bandwidth=None, weights=None):
     """
     Compute histogram based on a top-hat kernel with the specified (adaptive) bandwidth.
@@ -197,3 +210,7 @@ def find_mode(x, weights=None):
             return x0, x0+delta*sigma, polynomial_fit*delta.size/x.size/sigma
 
 
+# function that converts aparent magnitude to absolute magnitude given redshift 
+def abs_mag(z, apparent_mag):
+    distance = redshift_to_kpc(z)
+    return apparent_mag - 5*np.log10(distance) + 5

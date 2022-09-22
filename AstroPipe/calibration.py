@@ -6,6 +6,7 @@ from astropy.io import fits
 import numpy as np
 import os
 from astropy.stats import SigmaClip
+import astroalign
 
 from .classes import AstroGNU
 
@@ -176,3 +177,44 @@ def autoflat(flat_files, masterflat=None, config_nc='',hdu=0):
     return masterflat.data
         
 
+
+def register(list, nref=0,hdu=0,verbose=False):
+    """
+    Function to register a list of files.
+    list: list of files to be registered
+
+    return:
+    list_registered: list of images registered
+    """
+    if verbose: print(f'Start aligment for {len(list)} images')
+    if verbose: print(f'Use {list[nref]} for reference image...')
+    reference = fits.getdata(list[nref],hdu)
+    align_list = [reference]
+    del(list[nref])
+    for file in list:
+        if verbose: print(f'Aligning {file}...')
+        target = fits.getdata(file,hdu)
+        p, (pos_img, pos_img_rot) = astroalign.find_transform(target, reference)
+        aligned = astroalign.register(target, reference)
+        align_list.append(aligned)
+    if verbose: print(f'Alignment finished.')
+    return align_list
+
+def register_arrays(list, nref=0,verbose=False):
+    """
+    Function to register a list of images.
+    list: list of images to be registered
+
+    return:
+    list_registered: list of images registered
+    """
+    if verbose: print(f'Start aligment for {len(list)} images')
+    if verbose: print(f'Use {list[nref]} for reference image...')
+    reference = list[nref]
+    align_list = [reference]
+    for target in list:
+        p, (pos_img, pos_img_rot) = astroalign.find_transform(target, reference)
+        aligned = astroalign.register(target, reference)
+        align_list.append(aligned)
+    if verbose: print(f'Alignment finished.')
+    return align_list
