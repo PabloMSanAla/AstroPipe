@@ -6,6 +6,7 @@ from astropy.wcs import WCS
 import astropy.visualization as vis
 import matplotlib.patches as patches
 from astropy.table import Table
+from astropy.stats import sigma_clipped_stats
 
 matplotlib.rcParams['figure.figsize'] = (10,7)
 matplotlib.rcParams['xtick.labelsize'] = 16
@@ -30,7 +31,7 @@ def gaussian(x, mu, var, A=1):
     exp = np.exp(-((x - mu) ** 2) / (2 * var))
     norm = A / np.sqrt(2 * np.pi * var)
     return norm * exp
-#%%
+
 def noise_hist(result,out=False):
     
     fig = plt.figure(figsize=(9,6))
@@ -47,15 +48,21 @@ def noise_hist(result,out=False):
     if out:
         fig.savefig(out,dpi=300)
     
-def counts_to_mu(counts,zp, pixel_scale):
+def counts_to_mu(counts, zp, pixel_scale):
     return zp - 2.5*np.log10(counts/pixel_scale**2)
 
 def mu_to_counts(mu, zp, pixel_scale):
     return 10**((zp-mu)/2.5)*pixel_scale**2
 
+def mask_cmap(alpha=0.5):
+    transparent = matplotlib.colors.colorConverter.to_rgba('white',alpha = 0)
+    gray = matplotlib.colors.colorConverter.to_rgba('black',alpha = alpha)
+    cmap = matplotlib.colors.ListedColormap([transparent, gray])
+    return cmap
 
-def show(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
-            cmap='nipy_spectral_r',wcs=None,nan='cyan'):
+
+def show_old(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
+            cmap='nipy_spectral_r',wcs=None, nan='cyan',maskalpha=0.5):
     
     image = np.array(image)
     if not zp: 
@@ -73,7 +80,7 @@ def show(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
         cmap=cmap,origin='lower',interpolation='none')
         if not zp: fig.colorbar(im)
         if zp:
-            mmax,mmin = counts_to_mu(np.array([vmin,vmax]),22.5,0.33)
+            mmax,mmin = counts_to_mu(np.array([vmin,vmax]),zp,pixel_scale)
             bar = fig.colorbar(im,ticks=mu_to_counts(np.arange(mmax,mmin,2.5),zp,pixel_scale))
             ticklabels = 5*np.round((zp-2.5*np.log10(bar.get_ticks()))*2)/10
             bar.set_ticklabels(['{:2.1f}'.format(i) for i in ticklabels])
@@ -93,7 +100,7 @@ def show(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
             fig.colorbar(im, cax=cax,orientation="horizontal", pad=0.2,format='%.0e')
             cax.xaxis.set_ticks_position("top")
         else:
-            mmax,mmin = counts_to_mu(np.array([vmin,vmax]),22.5,0.33)
+            mmax,mmin = counts_to_mu(np.array([vmin,vmax]),zp,pixel_scale)
             bar = fig.colorbar(im, cax=cax,orientation="horizontal", 
                 pad=0.2,format='%.0e',ticks=mu_to_counts(np.arange(mmax,mmin,2.5),zp,pixel_scale))
             ticklabels = 5*np.round((zp-2.5*np.log10(bar.get_ticks()))*2)/10
@@ -102,6 +109,75 @@ def show(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
 
     # plt.tight_layout()
 
+def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
+            cmap='nipy_spectral_r', wcs=None, nan='cyan', mask=True, maskalpha=0.5):
+        
+    if len(np.shape(image)) == 2:    # Only one image
+        if vmin == None or vmax == None:
+            stats = sigma_clipped_stats(image, sigma=2.5)
+        if vmin == None: vmin = stats[1] - 1.5*stats[2]
+        if vmax == None: vmax = np.nanmax([np.nanpercentile(image.data,99.9), stats[1] + 25*stats[2]])
+        
+        hasmask = hasattr(image, 'mask')
+        if hasmask: data = image.data
+        else: data = image
+
+        if vmin < 0: data = data - 2*vmin; vmin = -vmin
+        norm = LogNorm(vmin=vmin, vmax=vmax)
+
+
+        if not ax: fig,ax = plt.subplots(1,1)
+        else: fig=ax.get_figure()
+
+        if not zp:
+            im = ax.imshow(data, norm=norm, cmap=cmap, origin='lower', interpolation='none')
+            fig.colorbar(im)
+        else:
+            mmax,mmin = counts_to_mu(np.array([vmin, vmax]),zp, pixel_scale)
+            if np.isnan(mmax): mmax = counts_to_mu(np.nanpercentile(image[image>0],1))
+            im = ax.imshow(counts_to_mu(data,zp,pixel_scale),vmin=mmin, vmax=mmax, cmap=cmap, origin='lower', interpolation='none')
+            fig.colorbar(im)
+        if hasmask and mask: ax.imshow(image.mask, origin='lower',cmap=mask_cmap(alpha=maskalpha))
+        plt.tight_layout()
+        return ax
+
+    else:                           # Multiple images   
+
+        if vmin == None or vmax == None:
+            stats = sigma_clipped_stats(image, sigma=2.5)
+        if vmin == None: vmin = stats[1] - 1.5*stats[2]
+        if vmax == None: vmax = np.nanmax([np.nanpercentile(image[0].data,99.9), stats[1] + 25*stats[2]])
+        if vmin < 0: image -= 2*vmin; vmin = -vmin
+        norm = LogNorm(vmin=vmin, vmax=vmax)
+        if not ax: fig,ax=plt.subplots(figsize = (6*len(image),6), nrows=1, 
+                            ncols=len(image),sharex=True,sharey=True)
+        else: fig=ax.get_figure()
+
+        plt.subplots_adjust(top=0.85,bottom=0.12,left=0.10,
+                            right=0.978,hspace=0.205,wspace=0.038)
+
+        for i,ima in enumerate(image):
+            hasmask = hasattr(ima, 'mask')
+            if hasmask: data = ima.data
+            else: data = ima
+            im = ax[i].imshow(data,norm=norm, origin = 'lower', cmap=cmap,interpolation='none')
+            if hasmask: ax[i].imshow(image.mask, origin='lower',cmap=mask_cmap(alpha=maskalpha))
+
+        pos_bar = [0.1, 0.9, 0.8, 0.03]
+        cax = fig.add_axes(pos_bar)
+
+        if not zp:
+            fig.colorbar(im, cax=cax,orientation="horizontal", pad=0.2,format='%.0e')
+            cax.xaxis.set_ticks_position("top")
+        else:
+            mmax,mmin = counts_to_mu(np.array([vmin,vmax]),zp, pixel_scale)
+            bar = fig.colorbar(im, cax=cax,orientation="horizontal", 
+                pad=0.2,format='%.0e',ticks=mu_to_counts(np.arange(mmax,mmin,2.5),zp,pixel_scale))
+            ticklabels = 5*np.round((zp-2.5*np.log10(bar.get_ticks()))*2)/10
+            bar.set_ticklabels(['{:2.1f}'.format(i) for i in ticklabels])
+            cax.xaxis.set_ticks_position("top")
+        plt.tight_layout()
+        return ax
 
 def displayimage(image, qmin=1, qmax=99, scale='linear',cmap='nipy_spectral_r'):           # with default arg 'title'
     interval = vis.AsymmetricPercentileInterval(qmin, qmax)
@@ -167,3 +243,49 @@ def plot_ellipses(profile, step=1, ax=None,max_r=None, center=(0,0),color='black
             ax.add_patch(ellipse_patch)
         i+=1
     return ax
+
+
+def make_random_cmap(ncolors=256, seed=None):
+    """
+    Make a matplotlib colormap consisting of (random) muted colors.
+
+    A random colormap is very useful for plotting segmentation images.
+
+    Parameters
+    ----------
+    ncolors : int, optional
+        The number of colors in the colormap.  The default is 256.
+
+    seed : int, optional
+        A seed to initialize the `numpy.random.BitGenerator`. If `None`,
+        then fresh, unpredictable entropy will be pulled from the OS.
+        Separate function calls with the same ``seed`` will generate the
+        same colormap.
+
+    Returns
+    -------
+    cmap : `matplotlib.colors.ListedColormap`
+        The matplotlib colormap with random colors in RGBA format.
+    """
+    from matplotlib import colors
+
+    rng = np.random.default_rng(seed)
+    hue = rng.uniform(low=0.0, high=1.0, size=ncolors)
+    sat = rng.uniform(low=0.2, high=0.7, size=ncolors)
+    val = rng.uniform(low=0.5, high=1.0, size=ncolors)
+    hsv = np.dstack((hue, sat, val))
+    rgb = np.squeeze(colors.hsv_to_rgb(hsv))
+
+    return colors.ListedColormap(colors.to_rgba_array(rgb))
+    
+def make_cmap(max_label, background_color='#000000ff', seed=None):
+
+    from matplotlib import colors
+
+    cmap = make_random_cmap(max_label + 1, seed=seed)
+
+    if background_color is not None:
+        cmap.colors[0] = colors.to_rgba(background_color)
+
+    return cmap
+

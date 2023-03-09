@@ -19,9 +19,11 @@ import subprocess
 
 from lmfit.models import GaussianModel
 
+import copy
 
 
-from .plotting import noise_hist
+
+from .plotting import noise_hist, make_cmap, show
 from .utilities import where, morphologhy, mag_limit
 from .sbprofile import background_estimation, isophotal_photometry_fix
 
@@ -45,10 +47,11 @@ class Image:
         self.wcs = WCS(self.header)
         self.pixel_scale = np.mean(utils.proj_plane_pixel_scales(self.wcs)*3600)
         self.file = filename
-        self.origin = filename
+        self.directory = os.path.dirname(self.file)
+        self.name, self.extension = os.path.splitext(self.file)
+        self.name = os.path.basename(self.name)
         self.bkg = 0
-        self.name = os.path.basename(filename).split('.')[-2].strip()
-        self.zp = zp
+        self.zp = zp 
         self.hdu = hdu
 
     def obj(self, ra, dec):
@@ -84,6 +87,7 @@ class Image:
         params = model.guess(hist[0],x=hist[1][1:],)
         result = model.fit(hist[0],params,x=hist[1][1:]) 
         self.std = result.values['sigma']
+        self.bkg = result.values['center']
         self.header['STD'] = self.std
         self.header['MAG_LIM'] = mag_limit(std, Zp=self.zp, scale=self.pixel_scale)
         if plot:
@@ -103,35 +107,25 @@ class Image:
                 mask=np.ma.getmask(self.data))
         else:
             self.data = data
+    
+    def copy(self):
+        return copy.deepcopy(self)
 
-    def show(self,vmin=None,vmax=None,cmap='nipy_spectral_r',
-                    width=400,ax=None):
-        mask = hasattr(self.data, 'mask')
-        if mask: data = self.data.data
-        if not mask: data = self.data
-        if not vmin: 
-            if hasattr(self,'maglim'): vmin = self.std
-            else: vmin = self.mu_to_counts(28.5)
-        if not vmax:  vmax = self.mu_to_counts(18.5)
+    def show(self, ax=None, vmin=None, vmax=None, cmap='nipy_spectral_r',
+                    width=400, mask=True):
+        data = self.data
+        if self.bkg < 0: 
+            data = data - 2*self.bkg
+            vmin = -self.bkg
+        if (self.bkg!=0) and (vmin==None): ax = show(data, ax=ax, vmin=self.bkg, vmax=vmax, cmap=cmap, mask=mask)
+        else: ax = show(data, ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, mask=mask)
 
-        mmax = self.counts_to_mu(vmax)
-        mmin = self.counts_to_mu(vmin)
-
-        norm = ImageNormalize(self.data,vmin=vmin,vmax=vmax,stretch=LogStretch())
-        fig = plt.figure()
-        im = plt.imshow(data - self.bkg,norm=norm,interpolation='none', origin='lower',cmap=cmap)
-        plt.xlim([self.pix[0]-width,self.pix[0]+width])
-        plt.ylim([self.pix[1]-width,self.pix[1]+width])
-        bar = fig.colorbar(im,ticks=self.mu_to_counts(np.arange(mmax,mmin,2.5)))
-        ticklabels = 5*np.round((self.zp-2.5*np.log10(bar.get_ticks()))*2)/10
-        bar.set_ticklabels(['{:2.1f}'.format(i) for i in ticklabels])
+        ax.set_xlim([self.pix[0]-width,self.pix[0]+width])
+        ax.set_ylim([self.pix[1]-width,self.pix[1]+width])
+        ax.text(0.02, 1, self.name, horizontalalignment='left',
+                verticalalignment='bottom', transform=ax.transAxes, fontweight='bold',fontsize='large')
         plt.tight_layout()
-        if mask:
-            transparent = matplotlib.colors.colorConverter.to_rgba('white',alpha = 0)
-            gray = matplotlib.colors.colorConverter.to_rgba('black',alpha = 0.3)
-            cmap = matplotlib.colors.ListedColormap([transparent, gray])
-            plt.imshow(self.data.mask, origin='lower',cmap=cmap)
-        return im 
+        return ax
     
     def get_morphology(self,n=4,width=1000) :
         data = self.data
@@ -154,9 +148,9 @@ class Image:
         if eps: self.eps = eps
         if r_eff: self.r_eff = r_eff
 
-    def get_background(self,width=5, max_r=None, out=None):
-        self.bkg,self.bkg_radius = background_estimation(self,width=width,max_r=max_r,out=out)
-    
+    def get_background(self, out=None):
+        self.bkg, self.bkg_radius = background_estimation(self.data, self.pix, self.pa, self.eps, out=out)
+        
     def set_background(self,bkg):
         self.bkg = bkg
         self.header['BKG'] = self.bkg
@@ -183,6 +177,7 @@ class Image:
 
 
 class SExtractor:
+    
     '''
     Class to run SExtractor on a FITS image.
     
@@ -207,6 +202,8 @@ class SExtractor:
 
         self.params_default = [
             "NUMBER",
+            'X_IMAGE',
+            'Y_IMAGE',
             "ALPHA_J2000",
             "DELTA_J2000",
             "MAG_ISO",
@@ -251,6 +248,8 @@ class SExtractor:
         self.seg_file = self.config['CHECKIMAGE_NAME']
         self.objects = fits.getdata(self.seg_file)
 
+    def cmap(self, background_color='#000000ff', seed=None):
+        return make_cmap(np.nanmax(self.objects), background_color=background_color, seed=seed)
         
         
         # if 'CHECKIMAGE_NAME' in self.config:
@@ -276,8 +275,8 @@ class AstroGNU():
         if not dir: dir = os.path.basename(self.file)
         self.directory = dir
         self.hdu = hdu
-        self.extension = self.file.split('.')[-1]
-        self.name = os.path.basename(self.file).split('.')[-2]
+        self.name, self.extension = os.path.splitext(self.file)
+        self.name = os.path.basename(self.name)
         self.loc = loc
         self.method = 'AstroGNU'
 

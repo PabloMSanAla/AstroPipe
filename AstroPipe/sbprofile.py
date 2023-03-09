@@ -1,6 +1,7 @@
 
 
 import AstroPipe.utilities as ut
+from AstroPipe.plotting import show
 
 import numpy as np 
 import os
@@ -8,7 +9,7 @@ import os
 import astropy.units as u
 from astropy.table import QTable
 from astropy.wcs.utils import pixel_to_skycoord
-from astropy.stats import sigma_clip
+from astropy.stats import sigma_clip, sigma_clipped_stats
 from astropy.visualization import ImageNormalize,LogStretch
 
 from photutils.aperture import EllipticalAperture, EllipticalAnnulus
@@ -22,12 +23,11 @@ from matplotlib.colors import LogNorm
 
 from scipy import stats
 from scipy.ndimage import median_filter
-from scipy.signal import argrelextrema
+from scipy.signal import medfilt,argrelextrema
+
 
 from lmfit.models import GaussianModel
 
-
-from scipy.signal import medfilt
 from sklearn.cluster import KMeans
 
 
@@ -301,67 +301,177 @@ def rectangular_photometry(IMG, center=None, pa=None, width=5,
     return profile
 
 
-def background_estimation(IMG, width = 5, max_r=None, out=True):
+def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None):
+    '''
+    Estimate the local background of a galaxy using elliptical apertures.
 
-    if not max_r:
-        max_r = np.max(np.shape(IMG.data))//2
-
-    width /= IMG.pixel_scale
-    if width<10: width=20
-
-    clipped = sigma_clip(IMG.data,sigma=3)
-    clipped = clipped[np.where(~clipped.mask)]
-    first_mode = find_mode(clipped)[0]
-    IMG.set_background(first_mode)
-
-    profile = isophotal_photometry_fix(IMG, growth_rate=1.2, max_r=max_r)
-    mu = profile['surface_brightness']
-    radius = profile['radius'][np.isfinite(mu)]
+    '''
+    pa = pa*np.pi/180 # convert to radians
     
-    mu = mu[np.isfinite(mu)]
-    
-     
-    argsort = np.argsort(mu)
-    dradius = np.diff(radius)
-    n = np.where(argsort==np.argmax(dradius))[0][0] - len(argsort)
-    radius_selected = radius[argsort[n:]]
-    dradius_selected = np.diff(radius_selected)
-    std_radius = np.max(dradius_selected)
+    # First guess of the sky value
+    flatten = data[data.mask==False].flatten()
+    flatten = flatten[np.isfinite(flatten)]
+    mode, results = find_mode(flatten)
+    std = results.values['sigma']
 
-    if np.min(radius_selected) < std_radius:
-        bkg_radius = np.min(radius_selected.value) + 0.1*std_radius.value
-    else:
-        bkg_radius = np.max(radius_selected.value) + 10*IMG.pixel_scale
-    
-    bkg_aperture = EllipticalAnnulus((IMG.pix[0],IMG.pix[1]),
-                    bkg_radius/IMG.pixel_scale , (bkg_radius+width)/IMG.pixel_scale, 
-                    (1-IMG.eps)*(bkg_radius+width)/IMG.pixel_scale, None,
-                    IMG.pa*np.pi/180)
+    rad = np.ones(1)
+    intensity = np.zeros(0)
+    intensity_std = np.zeros(0)
+    ellip_apertures = []
+    previous_mask = np.zeros_like(data.mask)
+    converge = False
+    maxr,stability = np.NaN, 0
 
-    mask_aper = bkg_aperture.to_mask(method='center').to_image(IMG.data.shape)
+    while not converge:
+
+        if len(ellip_apertures) > 1:
+            previous_mask = mask
+
+        ellip_apertures.append(EllipticalAperture((center[0],center[1]), rad[-1], (1-eps)*rad[-1], pa))
+        mask = ellip_apertures[-1].to_mask(method='center').to_image(data.shape)
+
+        index = ut.where([data.mask==False,mask!=0,previous_mask==0])
+        clipped = sigma_clip(data.data[index],sigma=3,maxiters=3)
+        intensity= np.append(intensity, np.ma.median(clipped))
+        intensity_std = np.append(intensity_std, np.nanstd(clipped)/np.sqrt(np.size(clipped)))
+    
+        if (intensity[-1] < mode + std) and np.isnan(maxr):
+            index = intensity < mode + std
+            dIdr = derivative(rad[index],intensity[index])
+            if (any(np.sign(dIdr[1:]/dIdr[:-1]) == -1
+                ) or (np.abs(intensity[-1]/mode - 1) < 1e-1)
+                ) and np.isnan(maxr):
+                stability += 1
+                if stability > 5:
+                    index = intensity < mode + std
+                    maxr = asymtotic_fit_radius(rad[index],dIdr)
+                    print(f'maxr={maxr:.2f}; rad={rad[-1]:.2f}; intesity={intensity[-1]:.2f}')
+            else: stability = 0
+        
+        if rad[-1] > 1.1*maxr:
+            converge = True
+            print(maxr,len(rad),len(intensity))
+            break
+
+        rad = np.append(rad, rad[-1]*growth_rate)
+
+
+    dIdr = derivative(rad,intensity)
+    ddIdr2 = derivative(rad,dIdr)
+
+    index = intensity < mode + std
+    skyradius1 = asymtotic_fit_radius(rad[index],dIdr[index])
+    skyradius2 = asymtotic_fit_radius(rad[index],ddIdr2[index])
+
+    skyradii = np.sort([skyradius1,skyradius2])
+    aperfactor = np.nanmax([0.01,float(np.round((60 - np.diff(skyradii)) / (np.sum(skyradii)),3))])
+
+    bkg_aperture = EllipticalAnnulus((center[0],center[1]),
+                     (1-aperfactor)*skyradii[0], (1+aperfactor)*skyradii[1], 
+                    (1-0.6*eps)*(1-aperfactor)*skyradii[0], None,
+                    pa)
+
+    mask_aper = bkg_aperture.to_mask(method='center').to_image(data.shape)
     mask_aper = np.ma.array(mask_aper,mask=1-mask_aper)
-    aper_values = IMG.data*mask_aper
+    aper_values = data*mask_aper
     aper_values = aper_values[np.where(~aper_values.mask)].flatten()
-    mode,gauss_fit = find_mode(aper_values)
+    localsky, gauss_fit = find_mode(aper_values)  
 
-    IMG.set_background(first_mode + mode)
+    if out: 
+        fig = plt.figure(figsize=(12,6))
+        ax1 = plt.subplot2grid((3,3),(0,0))
+        ax2 = plt.subplot2grid((3,3),(1,0),sharex=ax1)
+        ax3 = plt.subplot2grid((3,3),(2,0),sharex=ax1)
+        ax4 = plt.subplot2grid((3,3),(0,1),rowspan=3,colspan=2)
+        
+        fontsize = 12
+        ax1.plot(rad,intensity,'.', label='Flux')
+        ax1.set_ylabel('Intensity (ADUs)',fontsize=fontsize)
+        ax1.axhline(mode,ls='--',c='k',label='Mode')
+        ax1.axhline(mode-std,ls=':',c='k',label='Mode $\pm \sigma$')
+        ax1.axhline(mode+std,ls=':',c='k')
+        ax1.set_ylim([mode-std*1.6,mode+std*1.4])
+        arglim = np.nanargmin(np.abs(intensity-mode-std))
+        ax1.set_xlim([rad[arglim],1.1*np.nanmax(np.append(rad[-1],skyradii))])
 
-    if out:
-        im = IMG.show(width=3*bkg_radius/IMG.pixel_scale)
+        ax2.plot(rad,dIdr,'.')
+        ax2.set_ylabel('$dI/dr$',fontsize=fontsize)
+        ax2.axhline(0,ls='--',c='k')
+        ax2.axvline(skyradius2,ls='--',c='r',label='Sign change')
+        ax2.set_ylim([dIdr[arglim],-dIdr[arglim]/10])
+
+        ax3.plot(rad,ddIdr2,'.')
+        ax3.set_ylabel('$d^2I/dr^2$',fontsize=fontsize)
+        ax3.set_xlabel('Radius (pixels)',fontsize=fontsize)
+        ax3.axhline(0,ls='--',c='k')
+        ax3.axvline(skyradius1,ls='--',c='r',label='Sign change')
+        ax3.set_ylim([-ddIdr2[arglim]/10,ddIdr2[arglim]])
+
+        for ax in [ax1,ax2,ax3]:
+            ax.axvline(bkg_aperture.a_in,ls='-.',c='magenta',label='Sky annulus')
+            ax.axvline(bkg_aperture.a_out,ls='-.',c='magenta')       
+        
+        show(data, vmin=localsky, mask=True, ax=ax4)
+        width=1.2*skyradii[1]
+        ax4.set_xlim([center[0]-width,center[0]+width])
+        ax4.set_ylim([center[1]-width,center[1]+width])
+        ax4.text(0.02, 1, os.path.basename(os.path.splitext(out)[0]), horizontalalignment='left',
+                verticalalignment='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
         bkg_aperture.plot()
-        plt.title('Background of {:s} = {:^e}'.format(IMG.name,mode))
-        ax2=im.figure.add_subplot(3,3,8)
-        ax2.hist(aper_values,bins=500)
-        ax2.axvline(mode,c='r',ls='-.')
-        ax2.plot(gauss_fit.userkws['x'],gauss_fit.best_fit,'k',ls='-.')
-        ax2.axis('off')
-        plt.savefig(out,dpi=200)
-    
-    return mode, bkg_radius/IMG.pixel_scale
+        ax1.axhline(localsky,ls='-.',c='magenta')
+        ax4.text(1, 1, f'localsky={localsky:.3e}', horizontalalignment='right', color='magenta', fontweight='bold',
+                    verticalalignment='bottom', transform=ax4.transAxes,fontsize='large')
+        plt.tight_layout()
+        plt.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
+    return localsky, float(np.nanmax([rad[-1],maxr]))
 
-       
+
+def res_sum_squares(dmdr, cog, slope, abcissa):
+
+    y2 = abcissa+slope*dmdr    
+    rms = np.mean(np.sqrt((cog-y2)**2))
+
+    return rms, y2 
+
+def asymtotic_fit_radius(x,y):
+    '''
+    Find the asymptotic radius of a profile
+    fitting a line and finding the intersection with the y axis
+    '''
+    xx = np.array(x)
+    yy = np.array(y)
+    want = xx == xx
+    for i in range(3):
+        xx = xx[want]
+        yy = yy[want]
+        fit = stats.linregress(xx, yy)
+        rms, y2 = res_sum_squares(xx, yy, fit[0], fit[1])  # This was a custom function I wrote
+        want = np.abs(yy - y2) <= 3*rms
+    
+    return -fit[1]/fit[0]
+
+# Find radius where an asintote starts in a profile
+def find_radius_asintote(x,y):
+    # Find the first point where the slope of the line is 0
+    # This is the point where the asintote starts
+    # x,y are the profile
+    # Returns the radius where the asintote starts
+
+    # Find the slope of the line between each point
+    slope = derivative(x,y)
+
+    # Find the first point where the slope is 0
+    # This is the point where the asintote starts
+    # This is the point where the slope changes sign
+    sign_change = np.where(np.diff(np.sign(slope)))[0][0]
+
+    # Return the radius where the asintote starts
+    return x[sign_change]
+    
 def find_mode(data):
-    hist, bin_edges = np.histogram(data,bins=500)
+    mean, median, std = sigma_clipped_stats(data,sigma=3)
+    hist, bin_edges = np.histogram(data,bins=1000,
+                         range=[median - 5*std, median + 5*std])
     bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
 
     model = GaussianModel()
@@ -375,6 +485,11 @@ def derivative(x,y,n=4):
     Computes de slope from the n adjacent points using 
     linear regression.
     """
+    index = np.isfinite(x) & np.isfinite(y)
+    deriv = np.zeros_like(x)
+    x = np.array(x)[index]
+    y = np.array(y)[index]
+    
     der = np.zeros_like(x)
     for i in range(len(x)):
         if i<n:
@@ -384,7 +499,9 @@ def derivative(x,y,n=4):
         else:
             slope = stats.linregress(x[i-n:i+n],y[i-n:i+n])[0]
         der[i] = slope
-    return der
+    deriv[index] = der
+    if any(~index): deriv[~index] = np.NaN
+    return deriv
 
 
 

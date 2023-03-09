@@ -63,6 +63,11 @@ def morphologhy(binary):
     eps = 1 - minor/major
 
     return angle,major/2,eps
+
+def rebin(arr, new_shape):
+    shape = (new_shape[0], arr.shape[0] // new_shape[0],
+             new_shape[1], arr.shape[1] // new_shape[1])
+    return arr.reshape(shape).sum(-1).sum(1)
             
 
 def run_fabada(IMG,std=None, verbose=True,max_iter=3000):
@@ -214,3 +219,39 @@ def find_mode(x, weights=None):
 def abs_mag(z, apparent_mag):
     distance = redshift_to_kpc(z)
     return apparent_mag - 5*np.log10(distance) + 5
+
+
+
+# Computes the power spectrum of an image returns the power spectrum and the corresponding frequencies
+# def power_spectrum(image):
+#     # Compute the 2D power spectrum
+#     f = np.fft.fft2(image)
+#     fshift = np.fft.fftshift(f)
+#     magnitude_spectrum = 20*np.log(np.abs(fshift))
+#     # Compute the 1D power spectrum
+#     psd2D = np.abs(fshift)**2
+#     psd1D = np.mean(psd2D, axis=0)
+#     # Compute the corresponding frequencies
+#     Lx = image.shape[0]
+#     Ly = image.shape[1]
+#     fx = np.fft.fftfreq(Lx, d=1)
+#     fy = np.fft.fftfreq(Ly, d=1)
+#     fX, fY = np.meshgrid(fx, fy)
+#     f = np.sqrt(fX**2 + fY**2)
+#     ind = np.argsort(f, axis=None)
+#     f_sorted = f.flatten()[ind]
+#     psd1D_sorted = psd1D.flatten()[ind]
+#     return psd1D_sorted, f_sorted
+
+
+def power_spectrum(image):
+    f = np.fft.fft2(image)
+    fshift = np.fft.fftshift(f) 
+    power = np.abs(fshift)
+    k_y = np.fft.fftshift(np.fft.fftfreq(fshift.shape[0], d=2))
+    k_x = np.fft.fftshift(np.fft.fftfreq(fshift.shape[1], d=2))
+    k2 = (k_y**2)[:,np.newaxis] + (k_x**2)[np.newaxis,:]
+    return power.flatten(), k2.flatten()
+
+
+from scipy import ndimage
