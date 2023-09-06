@@ -15,8 +15,8 @@ from scipy.ndimage import gaussian_filter
 from photutils.segmentation import detect_sources
 from fabada import fabada
 
-from .classes import SExtractor, AstroGNU
-from .utilities import where
+from .classes import SExtractor, AstroGNU, MTObjects
+from .utilities import where, change_coordinates
 
 from astropy.stats import sigma_clipped_stats
 from scipy.ndimage import gaussian_filter
@@ -38,13 +38,13 @@ point_sexcofing = {
                 'MEMORY_BUFSIZE': 51200
             }
 
-def sigma_filter(catalog, columns, sigma=5, weights=None):
+def sigma_filter(catalog, columns, sigma=5, weights=None, colid = 'NUMBER'):
     if weights is None: weights = np.ones(len(catalog))
     index = np.ones(len(catalog)).astype(bool)
     for col in columns:
         mean, median, std = sigma_clipped_stats(catalog[col], sigma=2.5)
         index &= catalog[col]*weights > mean + sigma*std
-    return [catalog['NUMBER'][ind] for ind in np.where(index)[0]]
+    return [catalog[colid][ind] for ind in np.where(index)[0]]
 
 def gaussian1D(x, mu, sig):
     return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
@@ -58,6 +58,22 @@ def gaussian(sigma, shape, normalize=True):
     if normalize: g /= np.sum(g)
     return g
 
+
+def gaussian2d(positions, center, sigma):
+    return np.exp(-((positions[0] - center[0])**2. / (2. * sigma[0]**2.) + (positions[1] - center[1] )**2. / (2. * sigma[1]**2.)))
+
+
+def filter_distance2D(positions, center, pa, eps, distance):
+    newCoordinates = change_coordinates(positions, center, pa)
+    index = (newCoordinates[0] < distance) + (
+             newCoordinates[1] < (1-eps)*distance)
+    return index
+
+def weight_distance2D(positions, center, pa, eps, sigma):
+    newCoordinates = change_coordinates(positions, center, pa)
+    return gaussian2d(newCoordinates, np.array([0,0]) , np.array([sigma,(1-eps)*sigma]))
+
+
 def get_peaks(data, mask=None, verbose=False):
     original_stats = sigma_clipped_stats(data, mask=mask, sigma=2.5)
     recover = fabada(data, 2*(original_stats[2]**2),verbose=verbose)
@@ -68,13 +84,26 @@ def get_peaks(data, mask=None, verbose=False):
     peaks[peaks==0] = np.nan
     return peaks
 
-def get_bipeaks(data,n=2.5,verbose=False):
+def sharp_mask(data, C=7, W=5, mask=False, enhace=True):
+    '''
+    Contrast Enhancement using Digital Unsharp Masking
+    https://www.astronomy.ohio-state.edu/pogge.1/Ast350/Unsharp/
+    '''
+    original_stats = sigma_clipped_stats(data, mask=mask, sigma=2.5)
+    if enhace: enhaced = fabada(data, 2*(original_stats[2]**2),verbose=True)
+    else: enhaced = data
+    smooth = gaussian_filter(data,sigma=W)
+    return C*enhaced - (C-1)*smooth
+
+def get_bipeaks(data,n=2.5,sigma=5,verbose=False):
+
     original_stats = sigma_clipped_stats(data, sigma=2.5)
     recover = fabada(data, 2*(original_stats[2]**2),verbose=verbose)
-    peaks = recover - gaussian_filter(data, sigma=5)
+    peaks = recover - gaussian_filter(data, sigma=sigma)
     residual_stats = sigma_clipped_stats(peaks, sigma=2.5)
     peaks = fabada(peaks,3*(residual_stats[2]**2),verbose=verbose)
-    peaks[peaks > n*residual_stats[2]] = 1
+    
+    peaks[peaks > n*residual_stats[2]] *= 255
     peaks[peaks < n*residual_stats[2]] = 0
     return peaks
 
@@ -84,9 +113,36 @@ def increase_mask(mask, shape=(3,3)):
     return cv2.dilate(mask,np.ones(shape)/np.prod(shape), iterations=1)
 
 
-def sexmask(IMG,folders, plot=False):
+def sexmask(IMG, folders, plot=False):
+    '''
+    Use SExtractor to create a mask of the image
+    We run FABADA to enhace the object and improve the detection.
+    It has three steps:
+        1. Run SExtractor with default parameters to detect objects
+        2. Run SExtractor with default parameters to detect point sources
+        3. Run SExtractor in the residual image to detec point sources inside the galaxy
+    The last two steps has a gaussian weight distance and area filter to avoid the masking 
+    of extended inner regions of the galaxy.
+    TODO: in (3) add filter of detected objects and only apply to nxReff of galaxy
 
-    if not hasattr(folders,'mask'): folders.set_mask(os.path.join(folders.out,os.path.basename(IMG.file).split(IMG.extension)[0]+'_mask.fits'))
+
+    Parameters
+    ----------
+        IMG : AstroPipe Image object
+            Class object containing the image data
+
+        folders : AstroPipe Directories object
+            Class object containing the directories of the project
+
+        plot : bool, optional
+            If True, plot the mask and the image and save it in temporary directory
+
+    Returns
+    -------
+        bool : True if the mask is created
+    '''
+
+    if not hasattr(folders,'mask'): folders.set_mask(os.path.join(folders.out,os.path.basename(IMG.name).split(IMG.extension)[0]+'_mask.fits'))
     if not hasattr(IMG,'bkg'): bkg = IMG.bkg
     else: bkg = 0
 
@@ -103,7 +159,7 @@ def sexmask(IMG,folders, plot=False):
     # Step 2: Run SExtractor
     #   Step 2.1: Run SExtractor with default param with 1.3 sigma threshold
 
-    params = ['ISOAREA_IMAGE','ELLIPTICITY','FWHM_IMAGE']
+    params = ['ISOAREA_IMAGE','ELLIPTICITY','FWHM_IMAGE', 'THETA_IMAGE']
 
     defaultsex_config  = {"CHECKIMAGE_TYPE": "SEGMENTATION",
                                     'CHECKIMAGE_NAME' : os.path.join(folders.temp,
@@ -112,7 +168,7 @@ def sexmask(IMG,folders, plot=False):
                                     'DETECT_THRESH': 1.0,   # 1.5
                                     "DEBLEND_MINCONT": 0.005,
                                     "DEBLEND_NTHRESH": 32,
-                                    'PHOT_FLUXFRAC': 0.5, 
+                                    'PHOT_FLUXFRAC': 0.9, 
                                     'BACK_SIZE':  120,       # 64
                                     'MEMORY_OBJSTACK': 10000,           
                                     'MEMORY_PIXSTACK': 1000000,     
@@ -122,12 +178,15 @@ def sexmask(IMG,folders, plot=False):
     defaultsex.run(recover)
     IMG.obj_id(defaultsex)
 
-    defaultsex.catalog['Distance'] = np.sqrt((defaultsex.catalog['X_IMAGE']-IMG.pix[0])**2+(defaultsex.catalog['Y_IMAGE']-IMG.pix[1])**2)
-    defaultsex.objects[np.where(defaultsex.objects == IMG.sex_id)] = 0
+    defaultsex.objects[np.where(defaultsex.objects == IMG.id)] = 0
     
+    if not hasattr(IMG,'r_eff'): IMG.r_eff = float(defaultsex.catalog[IMG.id-1]['FLUX_RADIUS'])
+    if not hasattr(IMG,'eps'):   IMG.eps = float(defaultsex.catalog[IMG.id-1]['ELLIPTICITY'])
+    if not hasattr(IMG,'pa'):    IMG.pa = float(defaultsex.catalog[IMG.id-1]['THETA_IMAGE'])
 
-    # Filter
-    index = defaultsex.catalog['Distance'] < 2*IMG.r_eff
+    index = filter_distance2D(np.array([defaultsex.catalog['X_IMAGE'],
+                                    defaultsex.catalog['Y_IMAGE']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 2*IMG.r_eff)
     for ind in sigma_filter(defaultsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE']):
         if defaultsex.catalog['CLASS_STAR'][ind-1] < 0.5:
             defaultsex.objects[np.where(defaultsex.objects == ind)] = 0
@@ -153,14 +212,16 @@ def sexmask(IMG,folders, plot=False):
     midsex = SExtractor(config= midsex_config, params=params)
     midsex.run(recover)
     IMG.obj_id(midsex)
-    midsex.objects[np.where(midsex.objects == IMG.sex_id)] = 0
+    midsex.objects[np.where(midsex.objects == IMG.id)] = 0
 
-    midsex.catalog['Distance'] = np.sqrt((midsex.catalog['X_IMAGE']-IMG.pix[0])**2+(
-                                      midsex.catalog['Y_IMAGE']-IMG.pix[1])**2)
+    weights = weight_distance2D(np.array([midsex.catalog['X_IMAGE'],
+                                          midsex.catalog['Y_IMAGE']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 2*IMG.r_eff/3)
 
-    weights = 1.5*gaussian1D(midsex.catalog['Distance'], 0, 3*IMG.r_eff/4)
-    weights[midsex.catalog['Distance']>2*IMG.r_eff] = 0
-    index = midsex.catalog['Distance'] < 1.5*IMG.r_eff
+    index = filter_distance2D(np.array([midsex.catalog['X_IMAGE'],
+                                        midsex.catalog['Y_IMAGE']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 1.5*IMG.r_eff)
+
     for ind in sigma_filter(midsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE'],
                         sigma=3, weights=weights[index]):
         if midsex.catalog['CLASS_STAR'][ind-1] < 0.5:
@@ -186,15 +247,18 @@ def sexmask(IMG,folders, plot=False):
                         'MEMORY_BUFSIZE': 51200}
 
     pointsex = SExtractor(config = pointsex_config, params=params)
-    pointsex.run(get_bipeaks(IMG.data.data, n=2.5))
+    pointsex.run(get_bipeaks(IMG.data.data,n=2.5,sigma=5))
     IMG.obj_id(pointsex)
-    pointsex.objects[np.where(pointsex.objects == IMG.sex_id)] = 0
-    pointsex.catalog['Distance'] = np.sqrt((pointsex.catalog['X_IMAGE']-IMG.pix[0])**2+(
-                                      pointsex.catalog['Y_IMAGE']-IMG.pix[1])**2)
+    pointsex.objects[np.where(pointsex.objects == IMG.id)] = 0
 
-    weights = 1.5*gaussian1D(pointsex.catalog['Distance'],0, 3*IMG.r_eff/4)
-    weights[pointsex.catalog['Distance']>2*IMG.r_eff] = 0
-    index = pointsex.catalog['Distance'] < 1.5*IMG.r_eff
+    weights = 1.5*weight_distance2D(np.array([pointsex.catalog['X_IMAGE'],
+                                              pointsex.catalog['Y_IMAGE']]),
+                            IMG.pix, IMG.pa*np.pi/180, IMG.eps, 2*IMG.r_eff/3)
+
+    index = filter_distance2D(np.array([pointsex.catalog['X_IMAGE'],
+                                        pointsex.catalog['Y_IMAGE']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 1.5*IMG.r_eff)
+
     for ind in sigma_filter(pointsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE'], 
                             sigma=3, weights=weights[index]):
         pointsex.objects[np.where(pointsex.objects == ind)] = 0
@@ -211,14 +275,159 @@ def sexmask(IMG,folders, plot=False):
                     ).writeto(os.path.join(folders.temp,f'{IMG.name}_masked.fits')
                     ,overwrite=True)
 
-    mask_array = np.array(1-IMG.data.mask, dtype = np.uint8)
+    mask_array = np.array(IMG.data.mask, dtype = np.uint8)
     fits.PrimaryHDU(mask_array, header=IMG.header).writeto(folders.mask,overwrite=True)
 
     if plot: 
         IMG.show(width=300)
         plt.savefig(os.path.join(folders.out,IMG.name+'_mask.jpg'), dpi=300, bbox_inches='tight', pad_inches=0.1)
 
+    return os.path.isfile(folders.mask)
 
+def mtomask(IMG, folders, plot=False):
+    '''
+    Use MTObjects to create a mask of the image
+    We run FABADA to enhace the object and improve the detection.
+    It has three steps:
+        1. Run MTObjects with default parameters to detect objects
+        2. Run MTObjects with default parameters to detect point sources
+        3. Run MTObjects in the residual image to detec point sources inside the galaxy
+    The last two steps has a gaussian weight distance and area filter to avoid the masking 
+    of extended inner regions of the galaxy.
+    TODO: in (3) add filter of detected objects and only apply to nxReff of galaxy
+
+
+    Parameters
+    ----------
+        IMG : AstroPipe Image object
+            Class object containing the image data
+
+        folders : AstroPipe Directories object
+            Class object containing the directories of the project
+
+        plot : bool, optional
+            If True, plot the mask and the image and save it in temporary directory
+
+    Returns
+    -------
+        bool : True if the mask is created
+    '''
+
+    if not hasattr(folders,'mask'): folders.set_mask(os.path.join(folders.out,os.path.basename(IMG.file).split(IMG.extension)[0]+'_mask.fits'))
+    if hasattr(IMG,'bkg'): bkg = IMG.bkg
+    else: bkg = 0
+
+    if not hasattr(IMG,'std'): 
+        mean, bkg, IMG.std = sigma_clipped_stats(IMG.data, sigma=2.5)
+
+    
+    # Step 1: Run FABADA to smooth image an improve detection and initialize mask
+
+    recover = fabada(IMG.data,2*(IMG.std**2),verbose=True)
+    recover[np.isnan(IMG.data)] = np.nan
+    IMG.set_mask(np.zeros_like(IMG.data))
+
+    # Step 2: Run SExtractor
+    #   Step 2.1: Run SExtractor with default param with 1.3 sigma threshold
+
+    params = ['ISOAREA_IMAGE','ELLIPTICITY','FWHM_IMAGE', 'THETA_IMAGE']
+
+    defaultsex_config  = {"CHECKIMAGE_TYPE": "SEGMENTATION",
+                                    'CHECKIMAGE_NAME' : os.path.join(folders.temp,
+                                                        IMG.name+'_sex.fits'),
+                                    'PIXEL_SCALE' : IMG.pixel_scale,
+                                    'DETECT_THRESH': 1.0,   # 1.5
+                                    "DEBLEND_MINCONT": 0.005,
+                                    "DEBLEND_NTHRESH": 32,
+                                    'PHOT_FLUXFRAC': 0.9, 
+                                    'BACK_SIZE':  120,       # 64
+                                    'MEMORY_OBJSTACK': 10000,           
+                                    'MEMORY_PIXSTACK': 1000000,     
+                                    'MEMORY_BUFSIZE': 51200}
+
+    defaultsex = SExtractor(config= defaultsex_config, params=params)
+    defaultsex.run(recover)
+    IMG.obj_id(defaultsex)
+
+    defaultsex.objects[np.where(defaultsex.objects == IMG.id)] = 0
+    
+    if not hasattr(IMG,'r_eff'): IMG.r_eff = float(defaultsex.catalog[IMG.id-1]['FLUX_RADIUS'])
+    if not hasattr(IMG,'eps'):   IMG.eps = float(defaultsex.catalog[IMG.id-1]['ELLIPTICITY'])
+    if not hasattr(IMG,'pa'):    IMG.pa = float(defaultsex.catalog[IMG.id-1]['THETA_IMAGE'])
+
+    index = filter_distance2D(np.array([defaultsex.catalog['X_IMAGE'],
+                                    defaultsex.catalog['Y_IMAGE']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 2*IMG.r_eff)
+    for ind in sigma_filter(defaultsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE']):
+        if defaultsex.catalog['CLASS_STAR'][ind-1] < 0.5:
+            defaultsex.objects[np.where(defaultsex.objects == ind)] = 0
+    
+    defaultsex.objects = increase_mask(defaultsex.objects,shape=(4,4))
+    IMG.data.mask[np.where(defaultsex.objects != 0)] = 1
+
+    #   Step 2.2: Run MTObjects 
+
+    mto = MTObjects()
+    mto.move_factor = 0.01 # To imporve detection of faint outskirts of objects
+    
+    mto.run(recover)
+    IMG.obj_id(mto)
+    mto.objects[np.where(mto.objects == IMG.id)] = 0
+
+    weights = weight_distance2D(np.array([mto.catalog['X'],
+                                          mto.catalog['Y']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 2*IMG.r_eff/3)
+
+    index = filter_distance2D(np.array([mto.catalog['X'],
+                                        mto.catalog['Y']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 1.5*IMG.r_eff)
+
+    for ind in sigma_filter(mto.catalog[index], ['area','R_fwhm'],
+                        sigma=3, weights=weights[index], colid='ID'):
+        mto.objects[np.where(mto.objects == ind)] = 0
+
+    mto.objects = increase_mask(mto.objects,shape=(3,3))
+
+    IMG.data.mask[np.where(mto.objects != 0)] = 1
+
+    #   Step 2.3: Run MTObjects in residuals from gaussian smoothing
+
+    mto.run(get_bipeaks(IMG.data.data,n=2.5,sigma=5))
+    IMG.obj_id(mto)
+    mto.objects[np.where(mto.objects == IMG.id)] = 0
+
+    weights = 1.5*weight_distance2D(np.array([mto.catalog['X'],
+                                              mto.catalog['Y']]),
+                            IMG.pix, IMG.pa*np.pi/180, IMG.eps, 2*IMG.r_eff/3)
+
+    index = filter_distance2D(np.array([mto.catalog['X'],
+                                        mto.catalog['Y']]),
+                           IMG.pix, IMG.pa*np.pi/180, IMG.eps, 1.5*IMG.r_eff)
+
+    for ind in sigma_filter(mto.catalog[index], ['area','R_fwhm'], 
+                            sigma=3, weights=weights[index],colid='ID'):
+        mto.objects[np.where(mto.objects == ind)] = 0
+
+    mto.objects = increase_mask(mto.objects, shape = (2,2))
+
+    IMG.data.mask[np.where(mto.objects != 0)] = 1
+
+    #   Step 3: Save the files 
+    
+    masked = IMG.data.data.copy()
+    masked[np.where(IMG.data.mask==1)] = np.nan
+    fits.PrimaryHDU(masked,header=IMG.header
+                    ).writeto(os.path.join(folders.temp,f'{IMG.name}_masked.fits')
+                    ,overwrite=True)
+
+    mask_array = np.array(IMG.data.mask, dtype = np.uint8)
+    fits.PrimaryHDU(mask_array, header=IMG.header).writeto(folders.mask,overwrite=True)
+
+    if plot: 
+        IMG.show(width=300)
+        plt.savefig(os.path.join(folders.out,IMG.name+'_mask.jpg'), dpi=300, bbox_inches='tight', pad_inches=0.1)
+
+    return os.path.isfile(folders.mask)
 
 def automatic_mask(IMG,folders,sex_config=point_sexcofing,nc_config='--numthreads=8',plot=True):
 
@@ -261,8 +470,8 @@ def automatic_mask(IMG,folders,sex_config=point_sexcofing,nc_config='--numthread
 
     #   Step 2.1: Mask all objects of SExtractor outside of Segment source
 
-    IMG.data.mask[where([sex.objects != IMG.sex_id,
-               gnu.objects != IMG.seg_id,
+    IMG.data.mask[where([sex.objects != IMG.id,
+               gnu.objects != IMG.id,
                sex.objects != 0])] = 1
 
     #   Step 2.2: Mask all objects of SExtractor outside of Astropy source
@@ -307,7 +516,7 @@ def automatic_mask(IMG,folders,sex_config=point_sexcofing,nc_config='--numthread
 
     sex.run(masked)
     IMG.obj_id(sex)
-    sex.objects[sex.objects == IMG.sex_id] = 0
+    sex.objects[sex.objects == IMG.id] = 0
     # sex.objects = cv2.dilate(sex.objects.astype(np.int16), gaussian(3,(10, 10)), iterations=1)
     sex.objects = convolve2d(sex.objects, gaussian(3,(10, 10)), mode='same', boundary='fill', fillvalue=0)
     IMG.data.mask[sex.objects != 0] = 1
@@ -365,5 +574,5 @@ def ds9_region_masking(IMG,folders):
     mask_array = np.array(1-IMG.data.mask,dtype = np.uint8)
     fits.PrimaryHDU(mask_array,header=IMG.header).writeto(folders.mask,overwrite=True)
 
-
+    return True
 

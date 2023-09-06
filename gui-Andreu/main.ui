@@ -1,0 +1,1091 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>main_window</class>
+ <widget class="QMainWindow" name="main_window">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1050</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>IMP GUI</string>
+  </property>
+  <widget class="QWidget" name="central_widget">
+   <layout class="QVBoxLayout" name="central_widget_layout">
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item>
+     <widget class="QFrame" name="main_frame">
+      <property name="styleSheet">
+       <string notr="true"/>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::StyledPanel</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Raised</enum>
+      </property>
+      <layout class="QVBoxLayout" name="main_frame_layout" stretch="6,3">
+       <property name="leftMargin">
+        <number>5</number>
+       </property>
+       <property name="topMargin">
+        <number>5</number>
+       </property>
+       <property name="rightMargin">
+        <number>5</number>
+       </property>
+       <property name="bottomMargin">
+        <number>5</number>
+       </property>
+       <item>
+        <widget class="QGroupBox" name="main_display">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="title">
+          <string>Display Canvas</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+         <layout class="QVBoxLayout" name="display_canvas_layout">
+          <property name="leftMargin">
+           <number>5</number>
+          </property>
+          <property name="topMargin">
+           <number>5</number>
+          </property>
+          <property name="rightMargin">
+           <number>5</number>
+          </property>
+          <property name="bottomMargin">
+           <number>5</number>
+          </property>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTabWidget" name="tabWidget">
+         <property name="styleSheet">
+          <string notr="true">background-color: rgb(255, 255, 255);</string>
+         </property>
+         <property name="currentIndex">
+          <number>1</number>
+         </property>
+         <widget class="QWidget" name="data">
+          <attribute name="title">
+           <string>Data</string>
+          </attribute>
+          <layout class="QGridLayout" name="gridLayout_5" columnstretch="3,3,3">
+           <property name="leftMargin">
+            <number>15</number>
+           </property>
+           <property name="topMargin">
+            <number>15</number>
+           </property>
+           <property name="rightMargin">
+            <number>15</number>
+           </property>
+           <property name="bottomMargin">
+            <number>15</number>
+           </property>
+           <property name="horizontalSpacing">
+            <number>15</number>
+           </property>
+           <property name="verticalSpacing">
+            <number>9</number>
+           </property>
+           <item row="2" column="0">
+            <widget class="QLabel" name="displayed_wavelength_label">
+             <property name="text">
+              <string>Displayed Wavelength</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="1">
+            <widget class="QLabel" name="x_resolution">
+             <property name="text">
+              <string>Nx</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1" colspan="2">
+            <widget class="QLabel" name="number_wavelengths">
+             <property name="text">
+              <string>N_w</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="number_wavelengths_label">
+             <property name="text">
+              <string>Number of wavelengths</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0">
+            <widget class="QLabel" name="fov_label">
+             <property name="text">
+              <string>FOV</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1" colspan="2">
+            <widget class="QSlider" name="wavelength_selector">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="tickPosition">
+              <enum>QSlider::TicksBelow</enum>
+             </property>
+             <property name="tickInterval">
+              <number>1</number>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0">
+            <widget class="QLabel" name="resolution_label">
+             <property name="text">
+              <string>Resolution (X,Y)</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="2">
+            <widget class="QLabel" name="y_resolution">
+             <property name="text">
+              <string>Ny</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1" colspan="2">
+            <widget class="QLabel" name="displayed_wavelength">
+             <property name="text">
+              <string>w_i</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="1">
+            <widget class="ScientificDoubleSpinBox" name="fov_x">
+             <property name="decimals">
+              <number>4</number>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="2">
+            <widget class="ScientificDoubleSpinBox" name="fov_y">
+             <property name="decimals">
+              <number>4</number>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="0">
+            <widget class="QLabel" name="wavelength_selector_label">
+             <property name="text">
+              <string>Wavelength to display in data</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="0" colspan="3">
+            <spacer name="verticalSpacer_3">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>20</width>
+               <height>40</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item row="5" column="0">
+            <widget class="QLabel" name="label">
+             <property name="text">
+              <string>Instrument</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="1" colspan="2">
+            <widget class="QComboBox" name="instrument_selector">
+             <item>
+              <property name="text">
+               <string>Telescope 1</string>
+              </property>
+             </item>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="geometry">
+          <attribute name="title">
+           <string>Geometry</string>
+          </attribute>
+          <layout class="QHBoxLayout" name="geometry_layout" stretch="6,3">
+           <property name="leftMargin">
+            <number>5</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="rightMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>5</number>
+           </property>
+           <item>
+            <widget class="QFrame" name="geometry_params">
+             <property name="frameShape">
+              <enum>QFrame::StyledPanel</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Raised</enum>
+             </property>
+             <layout class="QGridLayout" name="gridLayout_2">
+              <property name="spacing">
+               <number>10</number>
+              </property>
+              <item row="4" column="3">
+               <widget class="ScientificDoubleSpinBox" name="observer_z">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1" colspan="3">
+               <widget class="QLineEdit" name="mask_coordinates">
+                <property name="placeholderText">
+                 <string notr="true">[(x1,y1), (x2,y2), (x3, y3), (x4, y4)]</string>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="1">
+               <widget class="ScientificDoubleSpinBox" name="observer_x">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="3">
+               <widget class="QPushButton" name="save_mask">
+                <property name="text">
+                 <string>Save</string>
+                </property>
+               </widget>
+              </item>
+              <item row="9" column="0">
+               <widget class="QLabel" name="domain_orientation_label">
+                <property name="text">
+                 <string>&lt;p&gt;Domain  orientation (&amp;phi;, &amp;theta;, &amp;psi;)&lt;/p&gt;</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="6" column="1">
+               <widget class="QDoubleSpinBox" name="observer_phi">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="minimum">
+                 <double>-99.989999999999995</double>
+                </property>
+               </widget>
+              </item>
+              <item row="8" column="3">
+               <widget class="ScientificDoubleSpinBox" name="domain_z">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="6" column="2">
+               <widget class="QDoubleSpinBox" name="observer_theta">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="minimum">
+                 <double>-99.989999999999995</double>
+                </property>
+               </widget>
+              </item>
+              <item row="8" column="0">
+               <widget class="QLabel" name="domain_vector_label">
+                <property name="text">
+                 <string>Domain location vector (x,y,z)</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="0">
+               <widget class="QLabel" name="capture_origin_label">
+                <property name="text">
+                 <string>Capture global origin</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="1" colspan="3">
+               <widget class="QPushButton" name="capture_origin">
+                <property name="text">
+                 <string>Capture</string>
+                </property>
+               </widget>
+              </item>
+              <item row="9" column="3">
+               <widget class="QDoubleSpinBox" name="domain_psi">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="minimum">
+                 <double>-99.989999999999995</double>
+                </property>
+               </widget>
+              </item>
+              <item row="9" column="2">
+               <widget class="QDoubleSpinBox" name="domain_theta">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="minimum">
+                 <double>-99.989999999999995</double>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1" colspan="2">
+               <widget class="QPushButton" name="capture_coordinates">
+                <property name="text">
+                 <string>Capture</string>
+                </property>
+               </widget>
+              </item>
+              <item row="8" column="1">
+               <widget class="ScientificDoubleSpinBox" name="domain_x">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="8" column="2">
+               <widget class="ScientificDoubleSpinBox" name="domain_y">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="6" column="3">
+               <widget class="QDoubleSpinBox" name="observer_psi">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="minimum">
+                 <double>-99.989999999999995</double>
+                </property>
+               </widget>
+              </item>
+              <item row="6" column="0">
+               <widget class="QLabel" name="observer_orientation_label">
+                <property name="text">
+                 <string>&lt;p&gt;Observer orientation (&amp;phi;, &amp;theta;, &amp;psi;)&lt;/p&gt;</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="2">
+               <widget class="ScientificDoubleSpinBox" name="observer_y">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="0">
+               <widget class="QLabel" name="capture_coordinates_label">
+                <property name="text">
+                 <string>Capture mask Coordinates</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="0">
+               <widget class="QLabel" name="observer_r_label">
+                <property name="text">
+                 <string>Observer vector</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="9" column="1">
+               <widget class="QDoubleSpinBox" name="domain_phi">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="minimum">
+                 <double>-99.989999999999995</double>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="mask_coordinates_label">
+                <property name="text">
+                 <string>Mask Coordinates</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="10" column="0">
+               <widget class="QLabel" name="dimension_label">
+                <property name="text">
+                 <string> &lt;p&gt;Domain dimensions (&amp;Delta;x, &amp;Delta;y, &amp;Delta;z)&lt;/p&gt;</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="10" column="1">
+               <widget class="ScientificDoubleSpinBox" name="dimension_x">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="10" column="2">
+               <widget class="ScientificDoubleSpinBox" name="dimension_y">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="10" column="3">
+               <widget class="ScientificDoubleSpinBox" name="dimension_z">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="geometry_canvas">
+             <property name="styleSheet">
+              <string notr="true"/>
+             </property>
+             <property name="frameShape">
+              <enum>QFrame::Box</enum>
+             </property>
+             <layout class="QVBoxLayout" name="geometry_canvas_layout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="stokes">
+          <attribute name="title">
+           <string>Stokes</string>
+          </attribute>
+          <layout class="QHBoxLayout" name="stokes_layout" stretch="6,3">
+           <property name="leftMargin">
+            <number>5</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="rightMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>5</number>
+           </property>
+           <item>
+            <widget class="QFrame" name="stokes_params">
+             <property name="frameShape">
+              <enum>QFrame::StyledPanel</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Raised</enum>
+             </property>
+             <layout class="QGridLayout" name="gridLayout">
+              <property name="leftMargin">
+               <number>9</number>
+              </property>
+              <property name="spacing">
+               <number>15</number>
+              </property>
+              <item row="3" column="0">
+               <widget class="QLabel" name="noise_label">
+                <property name="text">
+                 <string>Noise</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="2">
+               <widget class="ScientificDoubleSpinBox" name="I_weight">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="maximum">
+                 <double>10000000.000000000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="3">
+               <widget class="ScientificDoubleSpinBox" name="Q_weight">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="maximum">
+                 <double>10000000.000000000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="5" column="2">
+               <spacer name="verticalSpacer_2">
+                <property name="orientation">
+                 <enum>Qt::Vertical</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>20</width>
+                  <height>40</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="0" column="4">
+               <widget class="ScientificDoubleSpinBox" name="U_weight">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="maximum">
+                 <double>10000000.000000000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="2" colspan="4">
+               <widget class="QPushButton" name="select_spectra_button">
+                <property name="text">
+                 <string>Select pixel</string>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="4" colspan="2">
+               <widget class="ScientificDoubleSpinBox" name="noise_level">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="singleStep">
+                 <double>0.000100000000000</double>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="0">
+               <widget class="QLabel" name="weigths_label">
+                <property name="text">
+                 <string>Weights (I,Q,U,V)</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="0">
+               <widget class="QLabel" name="select_spectra_label">
+                <property name="text">
+                 <string>See one spectra</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="2" colspan="2">
+               <widget class="QComboBox" name="noise_type">
+                <item>
+                 <property name="text">
+                  <string>gaussian</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>constant</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>poisson</string>
+                 </property>
+                </item>
+               </widget>
+              </item>
+              <item row="0" column="5">
+               <widget class="ScientificDoubleSpinBox" name="V_weight">
+                <property name="decimals">
+                 <number>4</number>
+                </property>
+                <property name="maximum">
+                 <double>10000000.000000000000000</double>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="stokes_canvas">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">border-color: rgb(46, 52, 54);</string>
+             </property>
+             <property name="frameShape">
+              <enum>QFrame::Box</enum>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout"/>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="atom">
+          <attribute name="title">
+           <string>Atom</string>
+          </attribute>
+          <layout class="QHBoxLayout" name="atom_layout" stretch="6,3">
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <property name="leftMargin">
+            <number>5</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="rightMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>5</number>
+           </property>
+           <item>
+            <widget class="QFrame" name="atom_params">
+             <property name="frameShape">
+              <enum>QFrame::StyledPanel</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Raised</enum>
+             </property>
+             <layout class="QGridLayout" name="gridLayout_6">
+              <property name="spacing">
+               <number>15</number>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="atomic_module_label">
+                <property name="text">
+                 <string>Atomic module</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QComboBox" name="atomic_module">
+                <item>
+                 <property name="text">
+                  <string>AtomTest0</string>
+                 </property>
+                </item>
+               </widget>
+              </item>
+              <item row="1" column="0" colspan="2">
+               <spacer name="verticalSpacer_4">
+                <property name="orientation">
+                 <enum>Qt::Vertical</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>20</width>
+                  <height>40</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="atom_canvas">
+             <property name="styleSheet">
+              <string notr="true"/>
+             </property>
+             <property name="frameShape">
+              <enum>QFrame::Box</enum>
+             </property>
+             <layout class="QVBoxLayout" name="geometry_canvas_layout_2">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="quantities">
+          <attribute name="title">
+           <string>Quantities</string>
+          </attribute>
+          <layout class="QHBoxLayout" name="quantities_layout" stretch="6,3">
+           <property name="leftMargin">
+            <number>5</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="rightMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>5</number>
+           </property>
+           <item>
+            <widget class="QFrame" name="quantities_params">
+             <property name="frameShape">
+              <enum>QFrame::StyledPanel</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Raised</enum>
+             </property>
+             <layout class="QGridLayout" name="gridLayout_4">
+              <item row="2" column="0">
+               <spacer name="verticalSpacer_5">
+                <property name="orientation">
+                 <enum>Qt::Vertical</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>20</width>
+                  <height>40</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="0" column="0">
+               <widget class="QLabel" name="quantities_label">
+                <property name="text">
+                 <string>Quantities to use:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QCheckBox" name="quant0">
+                <property name="text">
+                 <string>electron density</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="quantities_canvas">
+             <property name="frameShape">
+              <enum>QFrame::Box</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Plain</enum>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_3"/>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="algorithm">
+          <attribute name="title">
+           <string>Algorithm</string>
+          </attribute>
+          <layout class="QHBoxLayout" name="algorithm_layout" stretch="6,3">
+           <property name="leftMargin">
+            <number>5</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="rightMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>5</number>
+           </property>
+           <item>
+            <widget class="QFrame" name="algorithm_params">
+             <property name="frameShape">
+              <enum>QFrame::StyledPanel</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Raised</enum>
+             </property>
+             <layout class="QGridLayout" name="gridLayout_3">
+              <item row="0" column="1">
+               <widget class="QComboBox" name="algorithm_selector">
+                <item>
+                 <property name="text">
+                  <string>AlgTest0</string>
+                 </property>
+                </item>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <spacer name="verticalSpacer">
+                <property name="orientation">
+                 <enum>Qt::Vertical</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>20</width>
+                  <height>40</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="0" column="0">
+               <widget class="QLabel" name="algorithm_label">
+                <property name="text">
+                 <string>Algorithm</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="algorithm_canvas">
+             <property name="frameShape">
+              <enum>QFrame::Box</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Plain</enum>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_2"/>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1050</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuFile">
+    <property name="title">
+     <string>File</string>
+    </property>
+    <addaction name="actionLoad_observations_fits"/>
+    <addaction name="actionLoad_data"/>
+    <addaction name="actionClear"/>
+    <addaction name="actionGenerate_IMP"/>
+    <addaction name="actionSave_data"/>
+    <addaction name="actionClose"/>
+   </widget>
+   <widget class="QMenu" name="menuSettings">
+    <property name="title">
+     <string>Settings</string>
+    </property>
+    <addaction name="actionAppearance"/>
+   </widget>
+   <widget class="QMenu" name="menuHelp">
+    <property name="title">
+     <string>Help</string>
+    </property>
+    <addaction name="actionAbout"/>
+   </widget>
+   <addaction name="menuFile"/>
+   <addaction name="menuSettings"/>
+   <addaction name="menuHelp"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionLoad_data">
+   <property name="text">
+    <string>Load .IMP</string>
+   </property>
+   <property name="statusTip">
+    <string>Load data from a file</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+O</string>
+   </property>
+  </action>
+  <action name="actionClear">
+   <property name="text">
+    <string>Clear</string>
+   </property>
+   <property name="statusTip">
+    <string>Clear the current data</string>
+   </property>
+  </action>
+  <action name="actionGenerate_IMP">
+   <property name="text">
+    <string>Generate .IMP</string>
+   </property>
+   <property name="statusTip">
+    <string>Generate the input file</string>
+   </property>
+  </action>
+  <action name="actionSave_data">
+   <property name="text">
+    <string>Save .IMP</string>
+   </property>
+   <property name="statusTip">
+    <string>Save the current state to a file</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
+   </property>
+  </action>
+  <action name="actionClose">
+   <property name="text">
+    <string>Close</string>
+   </property>
+   <property name="statusTip">
+    <string>Close the current state</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Esc</string>
+   </property>
+  </action>
+  <action name="actionAppearance">
+   <property name="text">
+    <string>Appearance</string>
+   </property>
+   <property name="statusTip">
+    <string>Change the appearance of the GUI</string>
+   </property>
+  </action>
+  <action name="actionAbout">
+   <property name="text">
+    <string>About</string>
+   </property>
+   <property name="statusTip">
+    <string>See more about the code and the docs</string>
+   </property>
+  </action>
+  <action name="actionLoad_observations_fits">
+   <property name="text">
+    <string>Load observations .fits</string>
+   </property>
+  </action>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ScientificDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
+   <header>ScientificDoubleSpinBox</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

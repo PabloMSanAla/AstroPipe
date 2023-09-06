@@ -1,13 +1,15 @@
 
 
-import AstroPipe.utilities as ut
-from AstroPipe.plotting import show
+
+from . import utilities as ut
+from .plotting import show
 
 import numpy as np 
 import os
 
 import astropy.units as u
-from astropy.table import QTable
+from astropy.io import fits
+from astropy.table import QTable, Table
 from astropy.wcs.utils import pixel_to_skycoord
 from astropy.stats import sigma_clip, sigma_clipped_stats
 from astropy.visualization import ImageNormalize,LogStretch
@@ -31,188 +33,532 @@ from lmfit.models import GaussianModel
 from sklearn.cluster import KMeans
 
 
-def isophotal_photometry(IMG,center=None,pa=None,eps=None,r_eff=None,
-                zp=None,max_r=1000,fix_center=False,fix_pa=False,fix_eps=False,
-                plot=False,save=None):
 
-    if not pa: pa =  IMG.pa * np.pi/180
-    if not eps: eps = IMG.eps 
-    if not center: center=IMG.pix
-    if not r_eff: r_eff=IMG.r_eff
-    if not zp: zp=IMG.zp
+class Profile:
+    '''
+    Class to work with surface brightness profiles. 
 
-    data = IMG.data - IMG.bkg 
+    Attributes
+    ----------
+        rad : array
+            Radii of the profile in pixels
+        int : array
+            Intensity of the profile [in same units as image meassured]
+        intstd : array
+            Standard deviation of the intensity [int units]
+        pa : array
+            Position angle of the profile [deg]
+        eps : array
+            Ellipticity of the profile [1-b/a]
+        center : 2d-array
+            Center of the profile [pixels]
+        bkg : float
+            Background of the image [int units]
+        bkgstd : float
+            Standard deviation of the background [int units]
+        zp : float
+            Zero point of the image [mag]
+        pixscale : float
+            Pixel scale of the image [arcsec/pixel]
+        mu : array
+            surface brightness magnitude of the profile [mag*arcsec^-2]
+        upperr : array
+            Upper limit of the surface brightness magnitude [mag*arcsec^-2]
+        lowerr : array
+            Lower limit of the surface brightness magnitude [mag*arcsec^-2]
+        columns : list
+            List of the columns of the profile to be saved in table
+        units : list
+            List of the units of the columns
+        meta : dict
+            Dictionary of the metadata of the profile to be saved in table
 
-    guess_aper = EllipseGeometry(x0=center[0], y0=center[1],
-                            sma=r_eff,eps=eps, pa=pa)
+    Methods
+    -------
+        set_params(radii=None, intensity=None, instensity_err=None, pa=None, eps=None, center=None, bkg=None, bkgstd=None, zp=None, pixscale=None)
+            Set the parameters of the profile
+        
+        load(filename)
+            Load the profile from a file
 
 
-    ellipse = Ellipse(data, guess_aper)
+    '''
+    def __init__(self, filename=None,  max_radius=None, init_radius=1, growth_rate=1.01):
+        
+        if max_radius is not None:
+            alpha = np.log10(growth_rate)
+            size = np.log10(max_radius)//alpha + 2
+            self.rad = init_radius*10**(alpha*np.arange(0,size))
 
-    isolist = ellipse.fit_image(r_eff,integrmode='median',sclip=3,nclip=3,maxsma=max_r,
-                minsma=1,step=0.05,fix_center=fix_center,fix_pa=fix_pa,fix_eps=fix_eps)
+            self.int = np.zeros_like(self.rad)
+            self.intstd = np.zeros_like(self.rad)
+            
+        self.bkg = 0 
+        self.bkgstd = 0 
+        self.zp = 0 
+        self.pixscale = 1
 
+        if filename is not None: 
+            self.load(filename)
+        
+    def __call__(self, array, hdu=0, plot=None, save=None):
+        '''
+        Returns the average photometric radial profile in the array
+        '''
+        if array is str: array = fits.getdata(array, hdu)
 
-    magnitude = zp - 2.5*np.log10(isolist.intens/IMG.pixel_scale**2) 
-    lower_err = zp - 2.5*np.log10((isolist.intens+isolist.int_err)/IMG.pixel_scale**2) 
-    upper_err   = zp - 2.5*np.log10((isolist.intens-isolist.int_err)/IMG.pixel_scale**2) 
+        profile = elliptical_radial_profile(array, self.rad, (self.x, self.y), self.pa, self.eps, 
+                                    plot=plot, save=save)
+        
+        profile.set_params(bkg=self.bkg, bkgstd=self.bkgstd, 
+                           zp=self.zp, pixscale=self.pixscale)
+        profile.brightness()
 
+        return profile
     
-    lower_err = magnitude - lower_err 
-    upper_err = upper_err - magnitude  
-    
-    lower_err[np.isnan(lower_err)] = np.nanmin(lower_err)
-    upper_err[np.isnan(upper_err)] = np.nanmax(upper_err)
+    def set_params(self, 
+            radii=None, intensity=None, instensity_err=None, 
+            pa=None, eps=None, center=None,
+            bkg=None, bkgstd=None, zp=None, pixscale=None):
 
-    if IMG.wcs:
-        coords = pixel_to_skycoord(isolist.x0,isolist.y0,IMG.wcs)
-        ra = coords.ra.deg*u.deg
-        dec = coords.dec.deg*u.deg
+        
+        if radii is not None: self.rad = radii
+        if intensity is not None: self.int = intensity
+        
+        # This conversion variable is only to create arrays of static pa, eps, and center
+        if np.size(pa) == np.size(eps) == 1:
+            conversion = np.ones_like(self.rad)
+            self.type = 'fixed'
+        else: 
+            conversion, self.type = 1, 'dynamic'
+        
+        if instensity_err is not None: self.intstd = instensity_err
+        
+        if pa is not None: self.pa = pa*conversion
+        if eps is not None: self.eps = eps*conversion
+        if center is not None and np.array(center).size==2: 
+            self.x = center[0]*conversion
+            self.y = center[1]*conversion
+        elif center is not None: self.x, self.y = center
+        
+
+        if bkg is not None: self.bkg = bkg
+        if bkgstd is not None: self.bkgstd = bkgstd 
+        if zp is not None: self.zp = zp
+        if pixscale is not None: self.pixscale = pixscale
+
+        self.columns = ['radius', 'intensity', 'intensity_err', 'pa', 'eps', 'x', 'y']
+        self.units = ['arcsec', 'counts', 'counts', 'deg', 'na', 'pixel','pixel']
+        self.meta = {'zp':zp, 'pixscale':pixscale, 'bkg':bkg , 'bkgstd':bkgstd}
+
+        if zp is not None and pixscale is not None and hasattr(self, 'int'):
+            self.brightness()
+        
+    
+    def brightness(self, zp=None, bkg=None, pixscale=None,  bkgstd=None):
+
+        zp = self.zp if zp is None else zp
+        bkg = self.bkg if bkg is None else bkg
+        bkgstd = self.bkgstd if bkgstd is None else bkgstd
+        pixscale = self.pixscale if pixscale is None else pixscale
+        
+        self.mu, self.upperr, self.lowerr = get_surface_brightness(
+            self.rad, self.int,  self.intstd, bkg, bkgstd, pixscale, zp)
+    
+    def morphology(self, level):
+        '''returns the morphology of the profile
+            at a surface brightness level'''
+        if not hasattr(self, 'mu'): self.brightness()
+        arg = ut.closest(self.mu, level)
+        pa = np.median(self.pa[arg-2:arg+8])
+        eps = np.median(self.eps[arg-2:arg+8])
+        return self.rad[arg], pa, eps
+    
+    def get_magnitude(self):
+        '''TODO: Create function that computes the
+        asymptotic magnitute of the profile
+        '''
+        return False
+
+    def skycenter(self, WCS):
+        self.ra, self.dec = pixel_to_skycoord(self.x, self.y, WCS)
+    
+    def plot(self, ax=None, color='r', label=None, **kwargs):
+        label = self.type if label is None else label
+        fig = plot_profile(self.rad*self.pixscale, self.mu, self.pa, self.eps, self.upperr, self.lowerr, 
+                           ax=ax, color=color, label=label, **kwargs)
+        return fig
+
+    def extend(self, array, max_radius, growth_rate=None):
+        '''Extends the radial profile to a new maximum radius'''
+        if growth_rate is None: growth_rate = np.nanmedian(self.rad[1:]/self.rad[:-1])
+        alpha = np.log10(growth_rate)
+        n = np.log10(max_radius/self.rad[-1])//alpha + 1
+        new_rad = self.rad[-3]*10**(alpha*np.arange(1,n+1))
+        new_prof = elliptical_radial_profile(array, new_rad, (self.x[-1], self.y[-1]), self.pa[-1], self.eps[-1])
+        self.rad = np.concatenate((self.rad, new_rad[2:]))
+        self.int = np.concatenate((self.int, new_prof.int[2:]))
+        self.intstd = np.concatenate((self.intstd, new_prof.intstd[2:]))
+        self.pa = np.concatenate((self.pa, new_prof.pa[2:]))
+        self.eps = np.concatenate((self.eps, new_prof.eps[2:]))
+        self.x = np.concatenate((self.x, new_prof.x[2:]))
+        self.y = np.concatenate((self.y, new_prof.y[2:]))
+        self.brightness()
+    
+    def remove_nans(self):
+        index = np.isnan(self.int) + np.isnan(self.rad)
+        self.rad = self.rad[~index]
+        self.int = self.int[~index]
+        self.intstd = self.intstd[~index]
+        self.pa = self.pa[~index]
+        self.eps = self.eps[~index]
+        self.x = self.x[~index]
+        self.y = self.y[~index]
+        self.brightness()
+
+
+    def write(self, filename=None, overwrite=True):
+        self.meta = {'zp':self.zp, 'pixscale': self.pixscale, 
+                     'bkg':self.bkg , 'bkgstd': self.bkgstd}
+        
+        if filename is None: filename = 'profile.txt'
+        
+        table = Table([self.rad, self.int, self.intstd, self.pa, self.eps, self.x, self.y], 
+                        names=self.columns,
+                        units=self.units, meta=self.meta)
+        table.write(filename, overwrite=overwrite)
+        return os.path.isfile(filename)
+    
+    def load(self, filename):
+        table = Table.read(filename)
+        self.set_params(np.array(table['radius'].value), 
+                        np.array(table['intensity'].value), np.array(table['intensity_err'].value), 
+                        np.array(table['pa'].value), np.array(table['eps'].value), 
+                        (np.array(table['x'].value), np.array(table['y'].value)), 
+                        table.meta['BKG'], table.meta['BKGSTD'], table.meta['ZP'], table.meta['PIXSCALE'])
+    
+
+def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, ax=None, color='k', label=None, **kwargs):
+    '''
+    Function to plot the surface brightness profile of a galaxy
+    and the elliptical parameters used in the photometry (eps and pa).
+    It also plots the upper and lower limits of the profile.
+
+    Parameters
+    ----------
+        radius : array
+            Radius of the profile [arcsec]
+        mu : array
+            Surface brightness of the profile [mag*arcsec^-2]
+        pa : float
+            Position angle of the galaxy [deg]
+        eps : float
+            Ellipticity of the galaxy 
+    '''
+
+    # if ax is None: fig,ax = plt.subplots(1,1)
+    fig = plt.figure(figsize=(5,6))
+    axeps = plt.subplot2grid((5,1),(4,0))
+    axmu = plt.subplot2grid((5,1),(0,0),rowspan=3,sharex=axeps)
+    axpa = plt.subplot2grid((5,1),(3,0),sharex=axeps)
+    
+
+    # Surface Brightness plot
+    axmu.plot(radius, mu, color=color, label=label, **kwargs)
+    if mupper is not None: axmu.plot(radius, mupper, color=color, ls='--')
+    if mlower is not None: axmu.plot(radius, mlower, color=color, ls='--')
+    axmu.set_ylabel('$\mu\,[\mathrm{mag\,arcsec}^{-2}]$',fontsize=14,labelpad=3)
+    axmu.invert_yaxis()
+
+    # Positional Angle plot
+    pa[pa>180] = pa[pa>180] - 180
+    pa[pa<0] = pa[pa<0] + 180
+    axpa.plot(radius, pa, color=color, **kwargs)
+    axpa.set_ylabel('PA (deg)',fontsize=12, labelpad=3)
+    axpa.set_ylim([-10,190]); axpa.set_yticks([0,45,90,135,180])
+    axpa.locator_params(axis='y',nbins=3, tight=True)
+    axpa.tick_params(labelsize=12)
+    #axpa.yaxis.set_label_position('right')
+
+    # Epsilon plot
+    axeps.plot(radius, eps, color=color, **kwargs)
+    axeps.set_ylabel('$\\epsilon$',fontsize=12,labelpad=3)
+    axeps.set_xlabel('Radius (arcsec)',fontsize=14,labelpad=3)
+    axeps.set_ylim([-0.1,1.1]); axeps.set_yticks([0,0.5,1])
+    axeps.tick_params(labelsize=12)
+
+    for ax in [axmu, axpa]:
+        plt.setp(ax.get_xticklabels(), visible=False)
+
+    for ax in [axmu,axpa,axeps]:
+        ax.grid(ls='--',alpha=0.5)
+    fig.tight_layout()
+    fig.subplots_adjust(hspace=0.15)
+    return fig
+
+def get_surface_brightness(rad, intensity,  intensitystd, bkg, bkgstd, pixscale, zp):
+    '''
+    Function to calculate the surface brightness from the intensity.
+    It also computes the lower and upper uncertanties due to the 
+    background and intensity std. It interpolates the nan values. 
+    '''
+    mag = zp -2.5*np.log10(intensity - bkg) + 5*np.log10(pixscale)
+    lowerr = zp - 2.5*np.log10(intensity - bkg + intensitystd + bkgstd) + 5*np.log10(pixscale)
+    upperr = zp - 2.5*np.log10(intensity - bkg - intensitystd - bkgstd) + 5*np.log10(pixscale)
+    if any(np.isnan(lowerr)): lowerr[np.isnan(lowerr)] = np.interp(rad[np.isnan(lowerr)], rad[~np.isnan(lowerr)], lowerr[~np.isnan(lowerr)])
+    if any(np.isnan(upperr)): upperr[np.isnan(upperr)] = np.interp(rad[np.isnan(upperr)], rad[~np.isnan(upperr)], upperr[~np.isnan(upperr)])
+    maxdiff = np.nanmax([np.abs(mag-lowerr), np.abs(mag-upperr)])
+    upperr[upperr<mag] = mag[upperr<mag] + maxdiff
+    lowerr[lowerr>mag] = mag[lowerr>mag] - maxdiff
+    return mag, upperr, lowerr
+
+def surface_photometry(data, mask, center, growth_rate=1.03,
+                        plot=None, verbose=False):
+    '''
+    Function that analyses the surface photometry of a galaxy image.
+    TODO:It will:
+        (1) Compute the morphological parameters, ellipticity and positon angle
+        (2) Compute the background and radius where it reaches it
+        (3) Compute three radial profiles:
+            (3.1) Variable ishophotal radial profile
+            (3.2) Fixed Elliptical radial profile
+            (3.3) Rectangular radial profile
+        (4) Small analysis to improve the profiles 
+        (5) Returns a table with the results
+    
+    '''
+    table = []
+    return table
+
+
+def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
+                        plot=None, save=None):
+    '''
+    Sigma clipped average elliptical radial profile of a galaxy.
+    It uses the elliptical apertures to get the radial profile.
+    
+    Parameters
+    ----------
+        data : 2D array
+            Image data.
+        rad : array or float
+            Radius of the apertures or maximum radius of aperture.
+        center : tuple
+            Center of the galaxy (x,y).
+        pa : float
+            Position angle of the galaxy.
+        eps : float
+            Ellipticity of the galaxy [1-b/a]
+        max_r : float
+            Maximum radius of the profile.
+        growth_rate : float
+            Growth rate of the apertures.
+        plot : str
+            If given it will save the plot in the given path.
+        save : str
+            If given it will save the profile in the given path.
+    
+    Returns
+    -------
+        profile : AstroPipe.sbprofile.Profile
+            Profile object with the radial profile.
+   '''
+
+    if type(rad) not in [np.ndarray, list]:
+        profile = Profile(max_radius=rad, growth_rate=growth_rate)
+        profile.set_params(pa=pa, eps=eps, center=center)
     else:
-        ra = isolist.x0
-        dec = isolist.y0
+        profile = Profile()
+        profile.set_params(pa=pa, eps=eps, center=center, radii=rad,
+                           intensity=np.zeros_like(rad), instensity_err=np.zeros_like(rad))
 
-    meta = {'pixel_scale':IMG.pixel_scale,
-                    'zero_point':zp, 'background':IMG.bkg}
+    # TODO: If keyword rad is givem maybe extrapolate pa, and eps¿?
+    # if rad is not None:
+    #     profile.pa = np.interp(rad, profile.rad, profile.pa)
+    #     profile.eps = np.interp(rad, profile.eps, profile.eps)
+    #     profile.set_params(center=(center[0], center[1]))
+    #     profile.center = np.interp(rad, profile.rad, profile.center)
 
-    if hasattr(IMG,'std'): 
-        meta['STD'] = IMG.std 
-        meta['MAG_LIM'] = ut.mag_limit(IMG.std, Zp=zp,scale=IMG.pixel_scale)
+    ellip_apertures = []
 
-    profile = QTable([isolist.sma*IMG.pixel_scale*u.arcsec,magnitude*u.mag/u.arcsec**2,
-                    lower_err*u.mag/u.arcsec**2,upper_err*u.mag/u.arcsec**2,
-                    isolist.pa*(180/np.pi)*u.deg,isolist.eps,
-                    ra,dec],
-                    names=['radius','surface_brightness','sb_err_low','sb_err_upper',
-                    'pa','ellipticity','ra_center','dec_center'],
-                    meta=meta)
-    if plot:
-        fig = plt.figure()
-        ax = plt.subplot(111)
+    previous_mask = np.zeros_like(data)
+
+    for i,rad in enumerate(profile.rad):
+
+        if len(ellip_apertures) > 1:
+            previous_mask = mask
+
+        ellip_apertures.append(EllipticalAperture(
+            (profile.x[i],profile.y[i]), rad, 
+            (1-profile.eps[i])*rad, profile.pa[i]*np.pi/180))
         
-        vmin = IMG.mu_to_counts(IMG.maglim)
-        vmax = IMG.mu_to_counts(18)
+        mask = ellip_apertures[-1].to_mask(method='center').to_image(data.shape)
 
-        norm = ImageNormalize(IMG.data,vmin=vmin,vmax=vmax,stretch=LogStretch())
+        index = (data.mask==False) * (mask!=0) * (previous_mask==0)
+        clipped = sigma_clip(data.data[index], sigma=2.5, maxiters=3)
+        profile.int[i] = np.ma.median(clipped)
+        profile.intstd[i] = np.nanstd(clipped)/np.sqrt(np.size(clipped))
         
-        im = ax.imshow(data,norm=norm,interpolation='none', 
-                        origin='lower',cmap='nipy_spectral_r')
-        
-        bar = fig.colorbar(im,ticks=IMG.mu_to_counts(np.arange(18,IMG.maglim,2.5)))
-        bar.set_ticklabels(np.arange(18,IMG.maglim,2.5))
+    if plot is not None:
+        fig,ax = plt.subplots(1,1,figsize=(8,8))
+        show(data, ax=ax)
+        for ap in ellip_apertures:
+            ap.plot(color='black', alpha=0.6,lw=0.5, axes=ax)
+        for val,lim in zip([profile.x[0], profile.y[0]],
+                            [ax.set_xlim, ax.set_ylim]):
+            lim([val-1.1*profile.rad[-1], val+1.1*profile.rad[-1]])
+        fig.savefig(plot, dpi=200, bbox_inches='tight', pad_inches=0.1)
 
-        for iso in isolist:
-            ellipse_patch = patch.Ellipse((iso.x0,iso.y0),
-                    2*iso.sma, 2*iso.sma*(1-iso.eps),
-                    iso.pa*180/np.pi,
-                    color='black',alpha=0.3,fill=False)
-            ax.add_patch(ellipse_patch)
-        ax.set_xlim([IMG.pix[0]-max_r,IMG.pix[0]+max_r])
-        ax.set_ylim([IMG.pix[1]-max_r,IMG.pix[1]+max_r])
-        plt.tight_layout()
-        
-    if save:
-        profile.write(save.profile,overwrite=True)
-        if plot:
-            plt.savefig(os.path.join(save.temp,
-                os.path.basename(save.profile).split('.')[-2]+'_apertures.jpg'),dpi=200)
-
+    if save is not None:
+        profile.write(save.split('.')[-2]+'_static.fits',overwrite=True)
 
     return profile
 
 
-def isophotal_photometry_fix(IMG, center=None, eps=None, pa=None, rad=None,
-                       zp=None, growth_rate = 1.03, max_r = 1000, plot=False,save=None):
-
-    if type(pa)==type(None): pa =  IMG.pa * np.pi/180
-    if type(eps)==type(None): eps = IMG.eps 
-    if type(center)==type(None): center=IMG.pix
-    if not zp: zp=IMG.zp
-    if type(rad)==type(None): 
-        rad = [1]; 
-        while rad[-1]<max_r:
-            rad.append(rad[-1]*growth_rate)
-
+def isophotal_photometry(data, center, pa, eps, reff,  max_r=None, growth_rate=1.03,
+                        fix_center=False, fix_pa=False,fix_eps=False, plot=None, save=None):
+    '''
+    Sigma clipped average radial profile of a galaxy.
+    It uses the elliptical apertures to get the radial profile.
     
-    if type(pa)!=list and type(pa)!=np.ndarray: pa = [pa]*len(rad)
-    if type(eps)!=list and type(eps)!=np.ndarray: eps = [eps]*len(rad)
-    if np.shape(center) != (2,len(rad)): center = np.transpose(len(rad)*[center])
-
-    # print(np.shape(rad),np.shape(pa),np.shape(eps),np.shape(center))
-    data = IMG.data - IMG.bkg 
-
-    intensity = []
-    intensity_std = []
-    ellip_apertures = []
-
-    previous_mask = np.zeros_like(IMG.data)
-
-    if plot:
-        fig = plt.figure()
-        ax = plt.subplot(111)
-        vmin = IMG.mu_to_counts(IMG.maglim)
-        vmax = IMG.mu_to_counts(18)
-
-        norm = ImageNormalize(IMG.data,vmin=vmin,vmax=vmax,stretch=LogStretch())
-        
-        im = ax.imshow(data,norm=norm,interpolation='none', 
-                        origin='lower',cmap='nipy_spectral_r')
-        
-        bar = fig.colorbar(im,ticks=IMG.mu_to_counts(np.arange(18,IMG.maglim,2.5)))
-        bar.set_ticklabels(np.arange(18,IMG.maglim,2.5))
-
-    for i in range(len(rad)):
-        if len(ellip_apertures) > 1:
-            previous_mask = mask
-
-        ellip_apertures.append(EllipticalAperture((center[0][i],center[1][i]), rad[i], (1-eps[i])*rad[i], pa[i]))
-        mask = ellip_apertures[-1].to_mask(method='center').to_image(data.shape)
-
-        index = ut.where([data.mask==False,mask!=0,previous_mask==0])
-        clipped = sigma_clip(data.data[index],sigma=3,maxiters=3)
-        intensity.append(np.ma.median(clipped))
-        intensity_std.append(np.nanstd(clipped)/np.sqrt(np.size(clipped)))
-        if plot:
-            ellip_apertures[-1].plot(color='black',alpha=0.4,lw=0.7,axes=ax)
+    Parameters
+    ----------
+        data : 2D array
+            Image data.
+        center : tuple
+            Center of the galaxy.
+        pa : float
+            Guess of the position angle of the galaxy.
+        eps : float
+            Guess ellipticity of the galaxy [1-b/a]
+        max_r : float
+            Maximum radius of the profile.
+        growth_rate : float
+            Growth rate of the apertures.
+        plot : str
+            If given it will save the plot in the given path.
+        save : str
+            If given it will save the profile in the given path.
     
-    if plot: 
-        ax.set_xlim([IMG.pix[0]-max_r,IMG.pix[0]+max_r])
-        ax.set_ylim([IMG.pix[1]-max_r,IMG.pix[1]+max_r])
-        plt.tight_layout()
-
-    sb_profile  = zp - 2.5*np.log10(np.divide(intensity,IMG.pixel_scale**2)) 
-    lower_err = zp - 2.5*np.log10(np.add(intensity,intensity_std)/IMG.pixel_scale**2) 
-    upper_err   = zp - 2.5*np.log10(np.subtract(intensity,intensity_std)/IMG.pixel_scale**2) 
-
-    lower_err = sb_profile - lower_err 
-    upper_err = upper_err - sb_profile  
+    Returns
+    -------
+        profile : AstroPipe.sbprofile.Profile
+            Profile object with the radial profile.
+   '''
+    pa = pa * np.pi/180
+    step = growth_rate - 1
     
-    lower_err[np.isnan(lower_err)] = np.nanmin(lower_err)
-    upper_err[np.isnan(upper_err)] = np.nanmax(upper_err)
+    guess_aper = EllipseGeometry(x0=center[0], y0=center[1],
+                            sma=reff, eps=eps, pa=pa)
 
-    rad = np.array(rad)*IMG.pixel_scale
 
-    if IMG.wcs:
-        coords = pixel_to_skycoord(center[0,:],center[1,:],IMG.wcs)
-        ra = coords.ra.deg*u.deg
-        dec = coords.dec.deg*u.deg
+    ellipse = Ellipse(data, guess_aper)
+
+    isolist = ellipse.fit_image(reff, integrmode='median',sclip=2.5, nclip=3, maxsma=max_r,
+                minsma=1,step=step,fix_center=fix_center,fix_pa=fix_pa,fix_eps=fix_eps)
+
+    profile = Profile()
+    profile.set_params(radii=isolist.sma, intensity=isolist.intens, instensity_err=isolist.int_err,
+        pa=isolist.pa*180/np.pi, eps=isolist.eps, center=(isolist.x0, isolist.y0))
+    
+    if plot is not None:
+        fig,ax = plt.subplots(1,1,figsize=(8,8))
+        show(data, ax=ax)
+        for i,rad in enumerate(profile.rad):
+            ap = EllipticalAperture(
+            (profile.x[i], profile.y[i]), rad, 
+            (1-profile.eps[i])*rad, profile.pa[i]*np.pi/180)
+            ap.plot(color='black', alpha=0.6,lw=0.5, axes=ax)
+        for val,lim in zip([profile.x[0], profile.y[0]], 
+                            [ax.set_ylim, ax.set_xlim]):
+            lim([val-1.1*max_r,val+1.1*max_r])
+        fig.savefig(plot, dpi=200, bbox_inches='tight', pad_inches=0.1)
+
+    if save is not None:
+        profile.write(save.split('.')[-2]+'_static.fits',overwrite=True)
+
+    return profile
+
+
+def rectangular_radial_profile(data, rad, center, pa, width=2, growth_rate=1.01, 
+                        plot=None, save=None):
+    
+    '''
+    Sigma clipped average rectangular radial profile of a galaxy.
+    It uses the rectangular apertures to get the radial profile.
+    
+    Parameters
+    ----------
+        data : 2D array
+            Image data.
+        rad : array or float
+            Radius of the apertures or maximum radius of aperture.
+        center : tuple
+            Center of the galaxy (x,y).
+        pa : float
+            Position angle of the galaxy.
+        widht : float
+            Width of the rectangular apertures.
+        growth_rate : float
+            Growth rate of the apertures.
+        plot : str
+            If given it will save the plot in the given path.
+        save : str
+            If given it will save the profile in the given path.
+    
+    Returns
+    -------
+        profile : AstroPipe.sbprofile.Profile
+            Profile object with the radial profile.
+   '''
+
+    if type(rad) not in [np.ndarray, list]:
+        profile = Profile(max_radius=rad, growth_rate=growth_rate)
+        profile.set_params(pa=pa, eps=0, center=center)
     else:
-        ra = center[0,:]
-        dec = center[1,:]
+        profile = Profile()
+        profile.set_params(radii=rad, pa=pa, eps=0, center=center,
+                           intensity=np.zeros_like(rad), instensity_err=np.zeros_like(rad))
 
-    profile = QTable([rad*u.arcsec ,sb_profile * (u.mag / u.arcsec**2),
-                    lower_err*u.mag/u.arcsec**2,upper_err*u.mag/u.arcsec**2,
-                    pa*u.deg,eps,ra,dec],
-                    names=['radius','surface_brightness','sb_err_low','sb_err_upper',
-                    'pa','ellipticity','ra_center','dec_center'],
-                    meta = {'pixel_scale':IMG.pixel_scale,
-                    'zero_point':zp,})
+    # TODO: instead of fixed width apertures use increasingly large apertures to improve S/N at large radii
 
-    if save:
-        profile.write(save.profile.split('.')[-2]+'_fixed.fits',overwrite=True)
-        if plot:
-            plt.savefig(os.path.join(save.temp,
-                os.path.basename(save.profile).split('.')[-2]+'_apertures_fixed.jpg'),dpi=200)
+
+    rect_apertures, std = [], 0 
+
+    previous_mask = np.zeros_like(data)
+
+    for i,rad in enumerate(profile.rad):
+
+        if len(rect_apertures) > 1:
+            previous_mask = mask
+            std = np.nanmedian(profile.intstd[-1])
+
+        rect_apertures.append(RectangularAperture(
+            (profile.x[i],profile.y[i]), 2*rad, width, pa*np.pi/180))
+        mask = rect_apertures[-1].to_mask(method='center').to_image(data.shape)
+
+        index = (data.mask==False) * (mask!=0) * (previous_mask==0)
+        clipped = sigma_clip(data.data[index], sigma=2.5, maxiters=3)
+        profile.int[i] = np.ma.median(clipped)
+        profile.intstd[i] = np.nanstd(clipped)/np.sqrt(np.size(clipped))
+        
+        # if np.nanmedian(profile.intstd[-1]) > 3*std:
+        #     width *= 1.5
+        #     std = np.nanmedian(profile.intstd[-1])
+
+    if plot is not None:
+        fig,ax = plt.subplots(1,1,figsize=(8,8))
+        show(data, ax=ax)
+        for ap in rect_apertures:
+            ap.plot(color='black', alpha=0.6,lw=0.5, axes=ax)
+        for val,lim in zip([profile.x[0], profile.y[0]],
+                            [ax.set_xlim, ax.set_ylim]):
+            lim([val-1.1*profile.rad[-1], val+1.1*profile.rad[-1]])
+        fig.savefig(plot, dpi=200, bbox_inches='tight', pad_inches=0.1)
+
+    if save is not None:
+        profile.write(save.split('.')[-2]+'_rectangular.fits',overwrite=True)
+
     return profile
 
 
@@ -300,27 +646,104 @@ def rectangular_photometry(IMG, center=None, pa=None, width=5,
 
     return profile
 
+def random_rectangular_boxes(center, pa, sma, eps, n=5, wbox=30):
+    ecc = np.sqrt(1-(1-eps)**2)
+    omegas = np.linspace(0,1.9*np.pi,n)
+    r = (sma*(1-eps))/np.sqrt(1-(ecc*np.cos(omegas))**2)
+    dx = r*np.cos(omegas)*(1+np.random.randint(2,10,n)/100)
+    dy = r*np.sin(omegas)*(1+np.random.randint(2,10,n)/100)
+    dx,dy = ut.change_coordinates(np.array([dx,dy]),np.array((0,0)),pa)
+    centers = np.array([center[0]+dx,center[1]+dy])
+    
+    rectangles = RectangularAperture(centers.T,wbox, wbox)
+    return rectangles
 
-def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None):
+
+def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, verbose=False):
     '''
     Estimate the local background of a galaxy using elliptical apertures.
+    
+    It detects the maximum radius of the object containing signal with some 
+    statistical tests [bkg_radius]. Then rectangular apertures photometry
+    to estimate the background value and its uncertainty. 
+    
+    The apertures are created using the center, position angle, and ellipticity
+    given. Then, the profile is meassure until certain radius. Once we reach 
+    intensity values close to the mode + sigma, we increase the resolution
+    (growth_rate=1.01), and compute the smooth derivative of the profile. 
+    
+    We stablish the value of the radius where the background is reach 
+    this conditions are met:
+        
+        - The derivative change its sign for more than five times 
+                This is a meassure of the fluctuation around dI = 0 
+                when looking for a local assymptote.
+        
+        - Or when: I(r)/mode - 1 < epsilon [epsilon = 0.1]
+                Safe parameter to avoid infinite loops.
 
+    TODO: To faster the process, first compute distances to mode 
+    +- sigma, and start in the closest or (q > 25 ¿?), and maybe 
+    limit to (q < 75 ¿?).
+    
+    TODO: first guess background with sigma clipping distribution, 
+    then do photometry with elliptical apertures increasing radius 
+    and check evidence of convergence (or Kolmogorov–Smirnov test)
+    and stop when next aperture is not signficante more similar. 
+    Combine with current method.
+
+    TODO: give option of sigma image to do statistical comparison of 
+    value optain with this, to see if the are of the same order, if not
+    give warning.
+
+    TODO: What is the best estimation of the uncertainty of the background
+    meassure here?
+        - Is it the std/np.sqrt(N_rect) 
+        - Is it the rms or rms normalize by the square root?
+    Do tests to see which is the best.
+
+    Parameters
+    ----------
+        data : 2D numpy array
+            Image of the galaxy.
+        center : tuple
+            Center of the galaxy in pixel coordinates.
+        pa : float
+            Position angle of the galaxy in degrees.
+        eps : float
+            Ellipticity of the galaxy. [1-b/a]
+        growth_rate : float, optional
+            Growth rate of the apertures. The default is 1.03.
+        out : str, optional
+            Path to save the background profile. The default is None.
+        verbose : bool, optional
+            Print the results. The default is False.
+    
+    Returns
+    -------
+
+        localsky : float
+            Background value.
+        localsky_std : float
+            Background uncertainty.
+        bkg_radius:  float
+            Limiting radius where the background is reached.
     '''
     pa = pa*np.pi/180 # convert to radians
     
-    # First guess of the sky value
+    # First guess of the mode value
     flatten = data[data.mask==False].flatten()
     flatten = flatten[np.isfinite(flatten)]
     mode, results = find_mode(flatten)
     std = results.values['sigma']
 
-    rad = np.ones(1)
+    rad = 10*np.ones(1)
     intensity = np.zeros(0)
     intensity_std = np.zeros(0)
     ellip_apertures = []
     previous_mask = np.zeros_like(data.mask)
     converge = False
-    maxr,stability = np.NaN, 0
+    maxr,epsilon = np.NaN, 1e-1
 
     while not converge:
 
@@ -336,21 +759,19 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None):
         intensity_std = np.append(intensity_std, np.nanstd(clipped)/np.sqrt(np.size(clipped)))
     
         if (intensity[-1] < mode + std) and np.isnan(maxr):
+
+            growth_rate = 1.01
             index = intensity < mode + std
             dIdr = derivative(rad[index],intensity[index])
-            if (any(np.sign(dIdr[1:]/dIdr[:-1]) == -1
-                ) or (np.abs(intensity[-1]/mode - 1) < 1e-1)
-                ) and np.isnan(maxr):
-                stability += 1
-                if stability > 5:
-                    index = intensity < mode + std
-                    maxr = asymtotic_fit_radius(rad[index],dIdr)
-                    print(f'maxr={maxr:.2f}; rad={rad[-1]:.2f}; intesity={intensity[-1]:.2f}')
-            else: stability = 0
-        
-        if rad[-1] > 1.1*maxr:
+            signs = np.sign(dIdr[1:]/dIdr[:-1]) == -1
+
+            if np.sum(signs) > 5 or (np.abs(intensity[-1]/mode - 1) < epsilon):
+                maxr = asymtotic_fit_radius(rad[index],dIdr)
+                if verbose: print(f'maxr={maxr:.2f}; rad={rad[-1]:.2f}; intesity={intensity[-1]:.2f}')
+
+        if rad[-1] > 1.3*maxr:
             converge = True
-            print(maxr,len(rad),len(intensity))
+            if verbose: print(maxr,len(rad),len(intensity))
             break
 
         rad = np.append(rad, rad[-1]*growth_rate)
@@ -365,6 +786,8 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None):
 
     skyradii = np.sort([skyradius1,skyradius2])
     aperfactor = np.nanmax([0.01,float(np.round((60 - np.diff(skyradii)) / (np.sum(skyradii)),3))])
+    width = float(np.nanmax([np.diff(skyradii),60]))
+
 
     bkg_aperture = EllipticalAnnulus((center[0],center[1]),
                      (1-aperfactor)*skyradii[0], (1+aperfactor)*skyradii[1], 
@@ -377,7 +800,21 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None):
     aper_values = aper_values[np.where(~aper_values.mask)].flatten()
     localsky, gauss_fit = find_mode(aper_values)  
 
-    if out: 
+
+    # Renctangular Apertures
+    rect = random_rectangular_boxes(center,-pa, np.mean(skyradii), 0.6*eps, n=np.int64(3*np.mean(skyradii)/(width)), wbox=width*0.8)
+
+    res_stats = []
+    for r in rect:
+        mask_r =r.to_mask(method='center').to_image(data.shape)
+        aper_val = data[(~data.mask) * (mask_r==1)]
+        mean,med,std = sigma_clipped_stats(aper_val.flatten())
+        res_stats.append(med)
+
+    localsky = np.nanmedian(res_stats)
+    localsky_std = np.nanstd(res_stats)/np.sqrt(np.sum(~np.isnan(res_stats)))
+
+    if out is not None: 
         fig = plt.figure(figsize=(12,6))
         ax1 = plt.subplot2grid((3,3),(0,0))
         ax2 = plt.subplot2grid((3,3),(1,0),sharex=ax1)
@@ -421,9 +858,12 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None):
         ax1.axhline(localsky,ls='-.',c='magenta')
         ax4.text(1, 1, f'localsky={localsky:.3e}', horizontalalignment='right', color='magenta', fontweight='bold',
                     verticalalignment='bottom', transform=ax4.transAxes,fontsize='large')
+        rect.plot(axes=ax4,color='black')
         plt.tight_layout()
         plt.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
-    return localsky, float(np.nanmax([rad[-1],maxr]))
+
+    return localsky, localsky_std, float(np.nanmax([rad[-1],maxr]))
+
 
 
 def res_sum_squares(dmdr, cog, slope, abcissa):

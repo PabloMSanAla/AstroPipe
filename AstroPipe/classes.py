@@ -21,14 +21,18 @@ from lmfit.models import GaussianModel
 
 import copy
 
-
+from ctypes import c_float, c_double
+from mtolib import _ctype_classes as ct
+from mtolib.tree_filtering import filter_tree, get_c_significant_nodes, init_double_filtering
+from mtolib import postprocessing
+import mtolib.main as mto
 
 from .plotting import noise_hist, make_cmap, show
-from .utilities import where, morphologhy, mag_limit
-from .sbprofile import background_estimation, isophotal_photometry_fix
+from .utilities import *
+from .profile import background_estimation, isophotal_photometry, elliptical_radial_profile
+
 
 import sys
-sys.path.append('/Users/pmsa/.local/lib/python3.8/site-packages/sewpy')
 import sewpy
 
 
@@ -61,21 +65,16 @@ class Image:
         self.pix = skycoord_to_pixel(
             self.SkyCoord, self.wcs
         )
-        self.pix = (np.float64(self.pix[0]),np.float64(self.pix[1]))
+        self.pix = np.array([np.float64(self.pix[0]),
+                            np.float64(self.pix[1])])
 
     def obj_id(self, mask):
-
-        if mask.method == 'AstroGNU':
-            self.seg_id = mask.objects[int(self.pix[1]), int(self.pix[0])]
-        elif mask.method == 'SExtractor':
-            self.sex_id = mask.objects[int(self.pix[1]), int(self.pix[0])]
+        self.id = mask.objects[int(self.pix[1]), int(self.pix[0])]
 
     def sky_to_pixel(self, ra, dec):
-
         return skycoord_to_pixel(SkyCoord(ra, dec, frame="fk5", unit="deg"), self.wcs)
 
     def pixel_to_sky(self, xp, yp):
-
         return pixel_to_skycoord(xp, yp, self.wcs)
 
     def noise(self,mask,plot=False):
@@ -94,30 +93,46 @@ class Image:
             noise_hist(result,out=plot)
         
     def crop(self, center, width=(500,500)):
-        self.cropped = self.data[np.int64(center[1]-width[1]):np.int64(center[1]+width[1]),
-                np.int64(center[0]-width[0]):np.int64(center[0]+width[0])]
-        self.crop_param = {'center':np.int64(center),
-                            'width':np.int64(width)}
-    def set_mask(self,mask):
-        self.data = ma.masked_array(ma.getdata(self.data), mask=mask)
-    
-    def set_data(self, data):
-        if hasattr(self,'mask'):
-            self.data = ma.masked_array(data, 
-                mask=np.ma.getmask(self.data))
-        else:
-            self.data = data
+        self.data, self.header = crop(self.data, self.header, center, width)
+        self.cropParams = {'center': np.int64(center),
+                            'width': np.int64(width)}
     
     def copy(self):
         return copy.deepcopy(self)
 
+    def radial_photometry(self,  growth_rate = 1.03, max_r = None, plot=None, save=None):
+
+        max_r = 2*self.bkg_radius if max_r is None else max_r
+    
+        profile = elliptical_radial_profile(self.data, self.pix, self.pa, self.eps, max_r,
+                                         growth_rate=growth_rate, plot=plot, save=save)
+        
+        profile.set_params(bkg=self.bkg, bkgstd=self.bkgstd, 
+                           zp=self.zp, pixscale=self.pixel_scale)
+        profile.brightness()
+        return profile
+
+    def isophotal_photometry(self, max_r=None, plot=None, save=None, 
+                            fix_center=True, fix_pa=False, fix_eps=False):
+
+        profile = isophotal_photometry(self.data, self.pix, self.pa, self.eps, self.reff,
+                                    max_r=max_r, plot=plot, save=save,
+                                    fix_center=fix_center, fix_pa=fix_pa, fix_eps=fix_eps)
+        
+        profile.set_params(bkg=self.bkg, bkgstd=self.bkgstd, 
+                           zp=self.zp, pixscale=self.pixel_scale)
+        profile.brightness()
+        return profile
+    
     def show(self, ax=None, vmin=None, vmax=None, cmap='nipy_spectral_r',
                     width=400, mask=True):
         data = self.data
         if self.bkg < 0: 
             data = data - 2*self.bkg
             vmin = -self.bkg
-        if (self.bkg!=0) and (vmin==None): ax = show(data, ax=ax, vmin=self.bkg, vmax=vmax, cmap=cmap, mask=mask)
+        else: 
+            data = data - self.bkg
+        if (self.bkg!=0) and (vmin is None): ax = show(data, ax=ax, vmin=self.bkg, vmax=vmax, cmap=cmap, mask=mask)
         else: ax = show(data, ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, mask=mask)
 
         ax.set_xlim([self.pix[0]-width,self.pix[0]+width])
@@ -127,30 +142,29 @@ class Image:
         plt.tight_layout()
         return ax
     
-    def get_morphology(self,n=4,width=1000) :
-        data = self.data
-        mean, median, std = sigma_clipped_stats(data, sigma=3.0)
-        binary = np.zeros(data.shape,dtype=np.float32)
-        index = np.where(data.mask==False)
-        binary[index] = data[index]
-        if hasattr(self,'std'): 
-            binary[where([data.mask==False,
-                    data.data>n*std])] = 1
-            binary[where([data.mask==False,
-                    data.data<n*std])] = 0
-        binary = binary[np.int32(self.pix[1]-width):np.int32(self.pix[1]+width),
-                        np.int32(self.pix[0]-width):np.int32(self.pix[0]+width)]
-        self.pa,self.r_eff,self.eps = morphologhy(binary)
-        if self.pa < 0: self.pa += 180
+    def get_background(self, out=None):
+        self.bkg, self.bkgstd, self.bkg_radius = background_estimation(self.data, self.pix, self.pa, self.eps, out=out)
+        
+    def get_morphology(self, nsigma=1):
+        binary = binarize(self.data, nsigma=nsigma)
+        self.pa,self.reff,self.eps = morphologhy(binary)
+        self.pix = find_center(self.data, self.pix, )
     
-    def set_morphology(self,pa=None,eps=None,r_eff=None):
+    def set_mask(self,mask):
+        self.data = ma.masked_array(ma.getdata(self.data), mask=mask)
+    
+    def set_data(self, data):
+        if hasattr(self,'mask'):
+            self.data = ma.masked_array(data, 
+                mask=np.ma.getmask(self.data))
+        else:
+            self.data = data
+
+    def set_morphology(self,pa=None,eps=None,reff=None):
         if pa: self.pa = pa
         if eps: self.eps = eps
-        if r_eff: self.r_eff = r_eff
+        if reff: self.reff = reff
 
-    def get_background(self, out=None):
-        self.bkg, self.bkg_radius = background_estimation(self.data, self.pix, self.pa, self.eps, out=out)
-        
     def set_background(self,bkg):
         self.bkg = bkg
         self.header['BKG'] = self.bkg
@@ -176,6 +190,7 @@ class Image:
         return 10**((self.zp-mu)/2.5)*self.pixel_scale**2
 
 
+
 class SExtractor:
     
     '''
@@ -197,7 +212,7 @@ class SExtractor:
             "FILTER_NAME": "/Users/pmsa/Documents/PhD/Projects/SExtractor/Param/default.conv",
             "PSF_NAME": "/Users/pmsa/Documents/PhD/Projects/SExtractor/Param/default.psf",
             "STARNNW_NAME": "/Users/pmsa/Documents/PhD/Projects/SExtractor/Param/default.nnw",
-            'PHOT_FLUXFRAC': 0.5,
+            'PHOT_FLUXFRAC': 0.9,
         }
 
         self.params_default = [
@@ -222,9 +237,9 @@ class SExtractor:
         self.config = self.files_default
         self.method = 'SExtractor'
 
-        if params:
+        if params is not None:
             self.add_params(params)
-        if config:
+        if config is not None:
             self.add_config(config)
 
     def add_params(self, p_list):
@@ -235,42 +250,127 @@ class SExtractor:
         for key in c_dict:
             self.config[key] = c_dict[key]
 
-    def run(self, file):
+    def run(self, file, keep=False):
         sew = sewpy.SEW(params=self.params, config=self.config, sexpath="sex")
-        if type(file)==str:
+        self.wordir = sew.workdir
+        if isinstance(file, str):
             self.file = file
         else:
-            self.file = 'sextractor_image.fits'
+            self.file = os.path.join(self.wordir,'sextractor_image.fits')
             fits.PrimaryHDU(file).writeto(self.file,overwrite=True)
 
+        if 'CHECKIMAGE_NAME' not in self.config: self.config['CHECKIMAGE_NAME'] = os.path.join(self.wordir,'sex.fits')
         self.out = sew(self.file)
         self.catalog = self.out['table']
         self.seg_file = self.config['CHECKIMAGE_NAME']
         self.objects = fits.getdata(self.seg_file)
+        if not keep: os.system(f'rm -r {self.wordir}')
+
 
     def cmap(self, background_color='#000000ff', seed=None):
         return make_cmap(np.nanmax(self.objects), background_color=background_color, seed=seed)
-        
-        
-        # if 'CHECKIMAGE_NAME' in self.config:
-        #     try:
-        #         os.system('mv '+self.out['catfilepath'
-        #             ]+ ' ' + os.path.dirname(self.seg_file))
-        #     except:
-        #         print('CHECKIMAGE not moved')
+    
 
     def load_catalog(self, file):
         self.cat = Table.read(file, format='ascii.sextractor')
 
+class MTObjects():
+    def __init__(self):
+
+        self.out = 'out.fits'
+        self.par_out='parameters.csv'
+        self.soft_bias = 0
+        self.gain = -1
+        self.bg_mean = None
+        self.bg_variance= -1
+        self.alpha = 1e-6
+        self.move_factor = 0.5
+        self.min_distance = 0.0 
+        self.verbosity = 0
+    
+    def setup(self, data):
+        # Set the pixel type based on the type in the image
+        self.d_type = c_float
+        if np.issubdtype(data.dtype, np.float64):
+            self.d_type = c_double
+            init_double_filtering(self)
+
+        # Initialise CTypes classes
+        try:
+            ct.init_classes(self.d_type)
+        except:
+            pass
+    
+    def run(self, data, save=False):
+        self.setup(data)
+        # Pre-process the image
+        processed_image = mto.preprocess_image(data, self, n=2)
+
+        # Build a max tree
+        mt = mto.build_max_tree(processed_image, self)
+
+        # Filter the tree and find objects
+        id_map, sig_ancs = mto.filter_tree(mt, processed_image, self)
+
+        # Relabel objects for clearer visualisation
+        id_map = mto.relabel_segments(id_map, shuffle_labels=False)
+
+        self.objects = id_map.reshape(data.shape) + 1
+        if save:
+            # Generate output files
+            mto.generate_image(data, id_map, self)
+            mto.generate_parameters(data, id_map, sig_ancs, self)
+        masked = np.ma.array(data, mask=np.isnan(data))
+        catalog = np.array(postprocessing.get_image_parameters(masked, id_map.ravel(), sig_ancs, self)) 
+        self.catalog = Table(rows= catalog[1:], names= catalog[0], dtype=[np.int64]+[np.float32]*(len(catalog[1])-1))
+
+    def cmap(self, background_color='#000000ff', seed=None):
+        return make_cmap(np.int64(np.nanmax(self.objects)), background_color=background_color, seed=seed)
+
+    def help(self):
+        print('''
+        This is a python wrapper for the MTObjects program by 
+        Caroline Haigh. It is a program to detect objects in 
+        astronomical images.
+
+        The original code can be found at: https://github.com/CarolineHaigh/mtobjects
+        
+        The differents parameters are:
+
+        -help	      Show the help message and exit
+        -out	      Location to save filtered image. Supports .fits and .png filenames
+        -par_out	  Location to save calculated parameters. Saves in .csv format
+        -soft_bias	  Constant bias to subtract from the image
+        -gain	      Gain (estimated by default)
+        -bg_mean	  Mean background (estimated by default)
+        -bg_variance  Background variance (estimated by default)
+        -alpha	      Significance level - for the original test, this must be 1e-6
+        -move_factor  Higher values reduce the spread of large objects. Default = 0.5
+        -min_distance Minimum brightness difference between objects. Default = 0.0
+        -verbosity	  Verbosity level (0-2). Default = 0.
+        
+        When running, two attributes are generated:
+            objects: numpy array with the segmentation map labelled (0=sky)
+            catalog: astropy table with the parameters of the objects 
+                     catalog columns : ['ID', 'X', 'Y', 'A', 'B', 'theta',  # 'kurtosis',
+                           'total_flux', 'mu_max', 'mu_median', 'mu_mean',
+                           'R_fwhm', 'R_e', 'R10', 'R90','area']
+                    
+        ''')
+
+
+
 class AstroGNU():
     def __init__(self, data, hdu=0, dir='', loc='/opt/local/bin/'):
-        if type(data) == str:
+        if isinstance(data, str):
             self.file = data
+            self.temp = False
         else:
-            self.file = os.path.join(dir,'save.fits')
+            self.file = os.path.join(dir,'_temp.fits')
             new_hdu = fits.PrimaryHDU(data)
             new_hdu.writeto(self.file,overwrite=True)
             hdu=0
+            self.temp = True
 
         if not dir: dir = os.path.basename(self.file)
         self.directory = dir
@@ -280,7 +380,7 @@ class AstroGNU():
         self.loc = loc
         self.method = 'AstroGNU'
 
-    def noisechisel(self,config=''):
+    def noisechisel(self,config='', keep=False):
         
         self.nc_file  = os.path.join(self.directory,self.name+'_nc.fits')
         
@@ -289,12 +389,14 @@ class AstroGNU():
         self.nc_cmd = os.path.join(self.loc,self.nc_cmd)
 
         os.system(self.nc_cmd)
-        # ncSub = subprocess.Popen(self.nc_cmd)
-        # ncSub.wait()
+        
         self.detections = fits.getdata(self.nc_file,'DETECTIONS')
         self.background = np.nanmean(fits.getdata(self.nc_file,'SKY'))
-    
-    def segment(self, config='',clumps=False):
+
+        if not keep: os.remove(self.nc_file)
+        if self.temp: os.remove(self.file)
+
+    def segment(self, config='', clumps=False, keep=False):
         self.seg_file  =  os.path.join(
                             self.directory, 
                             self.name+'_seg.fits')
@@ -308,6 +410,8 @@ class AstroGNU():
         
 
         if clumps: self.clumps = fits.getdata(self.seg_file,'CLUMPS')
+        if not keep: os.remove(self.seg_file)
+
 
     def make_catalog(self,config='',params='',fracmax=0.05,zp=22.5):
         self.cat_file = os.path.join(self.directory,self.name+'_nc.fits')
@@ -320,10 +424,11 @@ class AstroGNU():
                 
         self.catalog = Table.read(self.cat_file)
 
-    def remove(self,nc=True,seg=True,cat=True):
-        if nc:  os.system('rm '+self.nc_file)
-        if seg: os.system('rm '+self.seg_file)
-        if cat: os.system('rm '+self.cat_file)
+    def remove(self, nc=True,seg=True,cat=True):
+        if nc:  os.remove(self.nc_file)
+        if seg: os.remove(self.seg_file)
+        if cat: os.remove(self.cat_file)
+        if self.temp: os.remove(self.file)
         
 
 

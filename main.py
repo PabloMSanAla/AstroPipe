@@ -1,12 +1,11 @@
 #%%
 
-from AstroPipe.classes import Image,SExtractor,AstroGNU,Directories
+from AstroPipe.classes import Image, SExtractor,AstroGNU,Directories
 from AstroPipe.masking import automatic_mask, ds9_region_masking
 from AstroPipe.plotting import plot_ellipses 
 import AstroPipe.utilities as ut 
-from AstroPipe.sbprofile import isophotal_photometry,isophotal_photometry_fix,rectangular_photometry
-from AstroPipe.sbprofile import break_estimation
-
+from AstroPipe.profile import isophotal_photometry,elliptical_radial_profile,rectangular_photometry
+from AstroPipe.profile import break_estimation
 
 
 from astropy.io import fits
@@ -37,7 +36,7 @@ warnings.filterwarnings("ignore")
 ''' Initialize images to process'''
 
 
-path = '/Volumes/G-Drive/PhD/Data/AMIGAS-dejar'
+path = '/Volumes/G-Drive/PhD/Data/backup/AMIGAS'
 objects_file = '/Users/pmsa/Documents/PhD/Projects/AMIGA/Objects.fits'
 breakFile = '/Users/pmsa/Documents/PhD/Projects/AMIGA/Breaks_stats_radius.csv'
 
@@ -46,12 +45,10 @@ breakFile = '/Users/pmsa/Documents/PhD/Projects/AMIGA/Breaks_stats_radius.csv'
 # objects_file = '/scratch/pmsa/AMIGAS/Objects.fits'
 # breakFile = '/scratch/pmsa/AMIGAS/Breaks_stats_radius.csv'
 
-# index =  ut.make_parser().parse_args().index
-# index = 0
-
+index =  ut.make_parser().parse_args().index
 
 objects = Table.read(objects_file)
-index = np.where(objects['Galaxy']=='CIG947')[0][0]
+# index = np.where(objects['Galaxy']=='CIG1047')[0][0]
 
 object_name = objects['Galaxy'][index].strip()
 file = glob.glob(os.path.join(path,object_name,f'{object_name}*.fit*'))[0]
@@ -72,8 +69,6 @@ AstroPipe_steps = []
 
 
 img = Image(file, hdu=hdu, zp=objects['Zero_point'][index])
-
-
 
 coords = {'ra': objects['RA'][index] , 'dec':  objects['DEC'][index]}   
 img.obj(coords["ra"], coords["dec"])
@@ -101,20 +96,25 @@ plot_dict = {'width':ut.kpc_to_arcsec(50,distance)/img.pixel_scale,
             'vmin':img.mu_to_counts(np.round(np.nanpercentile(objects['Depth'],90)))}
 
 #%% Crop Image to light up process.
-width = 50*radius
-if width > 7000 or width < 4000:
-    width = 7000
 
-if any(width//2 > np.array(img.pix)):
-    width = np.array(np.min(img.pix))*2
+# width = 50*radius
+# if width > 7000 or width < 4000:
+#     width = 7000
 
-if not any(width > np.array(img.data.shape)):
+# if any(width//2 > np.array(img.pix)):
+#     width = np.array(np.min(img.pix))*2
 
-    ut.check_print(f'Croping image {img.name}...')
-    ut.check_print(f'... from {img.data.shape} to {(width,width)} pixels')
+# if not any(width > np.array(img.data.shape)):
 
-    ut.crop(img, width=[width//2]*2,
-            out=os.path.join(folders.out,f'{img.name}_crop.fits'))
+#     ut.check_print(f'Croping image {img.name}...')
+#     ut.check_print(f'... from {img.data.shape} to {(width,width)} pixels')
+
+#     img.data,img.header = ut.crop(img.data, img.header, img.pix,(width,width),
+#             out=os.path.join(folders.out,f'{img.name}_crop.fits'))
+
+if os.path.isfile(os.path.join(folders.out,f'{img.name}_crop.fits')):
+    img.data,img.header = fits.getdata(os.path.join(folders.out,f'{img.name}_crop.fits'),header=True)
+    img.pix = np.divide(img.data.shape,2)
 
 width = ut.kpc_to_arcsec(50,distance)/img.pixel_scale
 if save_plot: 
@@ -172,10 +172,12 @@ if save_plot:
 folders.set_profile(os.path.join(folders.out,img.name+'_profile.fits'))
 
 
-img.get_morphology(width=ut.kpc_to_arcsec(25,distance)/img.pixel_scale)
+# img.get_morphology(width=ut.kpc_to_arcsec(25,distance)/img.pixel_scale)
+img.get_morphology()
+img.r_eff = img.reff
 ut.check_print(f'Morphology found pa={img.pa} eps={img.eps} r_eff={img.r_eff}...')
 ut.check_print(f'Redifinding center from {img.pix}...')
-img.pix = ut.find_center(img)
+img.pix = ut.find_center(img.data, img.pix )
 ut.check_print(f'... to {img.pix}')
 
 if save_plot:
@@ -282,14 +284,27 @@ import matplotlib
 from fabada import fabada
 from astropy.stats import sigma_clipped_stats
 
+def find_radius(radius, profile, brightness):
+    arg = ut.closest(profile,brightness)
+    rad, prof = radius[arg-10:arg+10], profile[arg-10:arg+10]
+    x = np.linspace(rad[0],rad[-1],100)
+    y = np.interp(x,rad,prof)
+    return x[ut.closest(y,brightness)]
 
-manual_limits =  {'CIG154':100,
-                  'CIG279':200,
-                  'CIG329':240,
-                  'CIG568':123,
-                  'CIG772':139,
-                  'CIG947':549,
-                  'CIG971':300}
+
+manual_limits =  {'CIG11':133, 'CIG33': 288,
+                  'CIG59':178, 'CIG94': 98,
+                  'CIG96': 358, 'CIG100': 73,
+                  'CIG154':100, 'CIG279':200,
+                  'CIG329':240, 'CIG335':158,
+                  'CIG340':179, 'CIG512':188,
+                  'CIG568':123, 'CIG613':133,
+                  'CIG616':179, 'CIG626':233,
+                  'CIG744':163, 'CIG772':153,  
+                  'CIG800':218, 'CIG838':104,
+                  'CIG947':549, 'CIG971':300,
+                  'CIG1002':77, 'CIG1004':233,
+                  'CIG1047':88}
 
 run_fabada = '613' in img.name
 save_fig = True
@@ -298,7 +313,8 @@ extent = np.array([-img.pix[0],img.data.shape[1]-img.pix[0],
         -img.pix[1],img.data.shape[0]-img.pix[1]])
 extent *= img.pixel_scale
 
-r25 = profile['radius'][ut.closest(profile['surface_brightness'],25)]
+
+r25 = find_radius(profile['radius'],profile['surface_brightness'],25)
 alpha25 = 2.7
 
 
@@ -315,11 +331,12 @@ if img.name.split('_')[0] in  manual_limits.keys():
     index_limit = ut.closest(profile['radius'],manual_limits[img.name.split('_')[0]])
     index_offset = 0
 
-force_limits = {'x': profile['radius'][index_limit]+np.diff(profile['radius'])[index_limit],
-                'y': profile['surface_brightness'][index_limit-index_offset]+0.5}
+# force_limits = {'x': profile['radius'][index_limit]+np.diff(profile['radius'])[index_limit],
+#                 'y': profile['surface_brightness'][index_limit-index_offset]+0.5}
 
-force_limits = {'x': profile['radius'][-1],
-                'y': profile['surface_brightness'][np.isfinite(profile['surface_brightness'])][-1]+0.3}
+force_limits = {'x': manual_limits[img.name.split('_')[0]],
+                'y': 32}
+
 # force_limits = True
 
 mean,median,std = sigma_clipped_stats(img.data.data,mask=img.data.mask,sigma=2.5)
@@ -334,7 +351,7 @@ kwargs = {'origin':'lower','cmap':'nipy_spectral',
         'extent':extent,'interpolation':'none',
         'vmin':profile['surface_brightness'][~np.isnan(profile['surface_brightness'])][0],
         # 'vmax':np.nanpercentile(mu_image,75)}
-        'vmax':np.ceil(img.counts_to_mu(std))+0.3}
+        'vmax':np.ceil(img.counts_to_mu(std))+0.4}
 
 
 ut.check_print('Plotting Profile...')
@@ -345,8 +362,8 @@ ut.check_print('Plotting Profile...')
 for i in range(2):
     trunc_arg = [ut.closest(profile['radius'],radial_break)]
     trunc_aper = patches.Ellipse((0,0),
-                2*profile['radius'][trunc_arg[0]],
-                2*(profile['radius'][trunc_arg[0]] * (1 - profile['ellipticity'][trunc_arg[0]])),
+                2*radial_break,
+                2*(radial_break * (1 - profile['ellipticity'][trunc_arg[0]])),
                 profile['pa'][trunc_arg[0]],
                 color='black',ls='--',alpha=0.8,fill=False,lw=2)
 
@@ -406,10 +423,28 @@ for i in range(2):
             alpha=0.4,color='r')
 
     if radial_break != -999:
-        ax2.axvline(profile['radius'][trunc_arg],color='black',ls='--',label='Break')
+        ha = 'right' if r25>radial_break else 'left'
+        sign = -1 if r25>radial_break else 1
+        ax2.axvline(profile['radius'][trunc_arg],color='black',ls='--')
+        ax2.text(profile['radius'][trunc_arg] + sign*0.3,31,'break',
+                  rotation=90, fontsize=8,va='bottom', ha=ha)
+       
+        if np.abs(r25-radial_break) < 20:
+            if ha == 'right': ha = 'left'
+            else: ha = 'right'
+            sign *=1.3
+        else: 
+            ha = 'right' if r25>radial_break else 'left'
+            sign = 1 if r25<radial_break else -1
+
+        ax2.axvline(r25, color='black',ls=':')
+            
+        ax2.text(r25 - sign*0.3,31,'R$_{25}$',
+                  rotation=90, fontsize=9,va='bottom',ha=ha)
 
     if i==1:
-        ax2.legend(fontsize=8,loc='upper right',frameon=False,  bbox_to_anchor=(0.90, 0.95))
+        ax2.legend(ncol=1, fontsize=7, bbox_to_anchor=(0.90, 0.95),frameon=False,)
+
     ax2.set_ylabel('$\mu\,[\mathrm{mag\,arcsec}^{-2}]$',fontsize=fontsize,labelpad=3)
     ax2.invert_yaxis()
 
@@ -442,11 +477,12 @@ for i in range(2):
     # R25 limit
     for ax in [ax1,ax1_2]:
         for lim in [ax.set_xlim,ax.set_ylim]:
-            lim(-alpha25*r25,alpha25*r25)
+            lim(-alpha25*r25*1.2,alpha25*r25*1.2)
 
 
-    ax1_2 = plot_ellipses(profile, ax=ax1_2, max_r=force_limits['x']*1.1, step=5,lw=0.6,alpha=0.9)
+    ax1_2 = plot_ellipses(profile, ax=ax1_2, max_r=force_limits['x'], step=5,lw=0.6,alpha=0.9)
     if radial_break !=-999: ax1_2.add_patch(trunc_aper)
+    
 
 
     bar_ax = ax2.inset_axes([0.9*force_limits['x'], kwargs['vmin'], 0.05*force_limits['x'], kwargs['vmax']-kwargs['vmin']],
@@ -470,11 +506,21 @@ for i in range(2):
         ax.yaxis.set_tick_params(labelsize=10)
         ax.xaxis.set_tick_params(labelsize=10)
     
-     
+    
+
     if force_limits:
         ax2.set_ylim([force_limits['y'],np.nanmin(profile['surface_brightness'])-0.5])
         ax2.set_xlim([-force_limits['x']//30,force_limits['x']])
     ax6.set_xlim(np.multiply(ax2.get_xlim(),np.pi*distance/(3600*180)))
+
+    ax2.set_ylim([33,16])
+    ax2.set_yticks([17,22,27,32])
+    
+    ax4.set_ylim(-15,190)
+    ax4.set_yticks([0,90,180])
+
+    ax5.set_ylim(-0.1,1.1)
+    ax5.set_yticks([0,0.5,1])
 
     plt.subplots_adjust(top=0.915,
     bottom=0.09,
@@ -490,234 +536,3 @@ for i in range(2):
 
 
     # plt.show()
-#%% Aaron Watkins Break Finder
-'New sky background subtraction method'
-
-from photutils.aperture import EllipticalAperture, EllipticalAnnulus
-from astropy.stats import sigma_clipped_stats, sigma_clip
-from AstroPipe.sbprofile import find_mode, derivative
-
-from AstroPipe.plotting import show
-import scipy.stats as stats 
-
-
-# Find radius where an asintote starts in a profile
-def find_radius_asintote(x,y,eps):
-    # Find the first point where the slope of the line is 0
-    # This is the point where the asintote starts
-    # x,y are the profile
-    # Returns the radius where the asintote starts
-
-    # Find the slope of the line between each point
-    slope = derivative(x,y)
-
-    # Find the first point where the slope is 0
-    # This is the point where the asintote starts
-    # This is the point where the slope changes sign
-    sign_change = np.where(np.diff(np.sign(slope)))[0]
-
-    #If there is no sign change, return the point with the closes slope to eps
-    if len(sign_change) == 0:
-        return x[np.nanargmin(np.abs(slope - eps))]
-    else:
-        # Return the radius where the asintote starts
-        return x[sign_change]
-
-def res_sum_squares(dmdr, cog, slope, abcissa):
-
-    y2 = abcissa+slope*dmdr    
-    rms = np.mean(np.sqrt((cog-y2)**2))
-
-    return rms, y2 
-
-def asymtotic_fit_radius(x,y,eps=1e-5):
-    '''
-    Find the asymptotic radius of a profile
-    fitting a line and finding the intersection with the y axis
-    '''
-    xx = np.array(x)
-    yy = np.array(y)
-    want = xx == xx
-    for i in range(3):
-        xx = xx[want]
-        yy = yy[want]
-        fit = stats.linregress(xx, yy)
-        rms, y2 = res_sum_squares(xx, yy, fit[0], fit[1])  # This was a custom function I wrote
-        want = np.abs(yy - y2) <= 3*rms
-    
-    return -fit[1]/fit[0]
-
-
-IMG = img.copy()
-pa =  IMG.pa * np.pi/180
-eps = IMG.eps 
-center=IMG.pix
-zp=IMG.zp
-rad = None ; max_r = 3000; growth_rate = 1.03
-plot=True
-if rad is None:
-    rad = np.ones(1)
-
-data = IMG.data 
-flatten = IMG.data[IMG.data.mask==False].flatten()
-flatten = flatten[np.isfinite(flatten)]
-mode, results = find_mode(flatten)
-std = results.values['sigma']
-
-intensity = np.zeros(0)
-intensity_std = np.zeros(0)
-ellip_apertures = []
-previous_mask = np.zeros_like(IMG.data)
-converge = False
-maxr,stability = np.NaN, 0
-
-
-while not converge:
-    
-    if len(ellip_apertures) > 1:
-        previous_mask = mask
-    ellip_apertures.append(EllipticalAperture((center[0],center[1]), rad[-1], (1-eps)*rad[-1], pa))
-    mask = ellip_apertures[-1].to_mask(method='center').to_image(data.shape)
-
-    index = ut.where([data.mask==False,mask!=0,previous_mask==0])
-    clipped = sigma_clip(data.data[index],sigma=3,maxiters=3)
-    intensity= np.append(intensity, np.ma.median(clipped))
-    intensity_std = np.append(intensity_std, np.nanstd(clipped)/np.sqrt(np.size(clipped)))
-    
-    # print(f'maxr = {maxr:.1f}; rad={rad[-1]:.2f}; intesity={intensity[-1]:.2f}', end=',')
-    
-    if intensity[-1] < mode + std and np.isnan(maxr):
-        index = intensity < mode + std
-        dIdr = derivative(rad[index],intensity[index])
-        if (any(np.sign(dIdr[1:]/dIdr[:-1]) == -1
-             ) or (np.abs(intensity[-1]/mode - 1) < 1e-1)
-            ) and np.isnan(maxr):
-            stability += 1
-            if stability > 5:
-                maxr = asymtotic_fit_radius(rad[index],dIdr,eps=mode+1)
-                print(f'maxr={maxr:.2f}; rad={rad[-1]:.2f}; intesity={intensity[-1]:.2f}')
-        else: stability = 0
-    if rad[-1] > 1.1*maxr:
-        converge = True
-        print(maxr,len(rad),len(intensity))
-        break
-
-    rad = np.append(rad, rad[-1]*growth_rate)
-
-#%%
-
-cumintensity = np.nancumsum(intensity)
-dcumint = derivative(rad,cumintensity)
-index = np.where(cumintensity > cumintensity[-1]/2)[0]
-maxr = asymtotic_fit_radius(rad[index],cumintensity[index],eps=mode+std)
-
-if plot:
-    fig, (ax1,ax2) = plt.subplots(2,1,figsize=(10,5), sharex=True)
-    ax1.plot(rad,cumintensity)
-    ax2.plot(rad,dcumint)
-    ax1.set_xscale('log'); ax2.set_xscale('log') 
-    ax1.axvline(maxr,ls='--',color='r')
-
-firstd = derivative(rad,intensity)
-secondd = derivative(rad,firstd)
-
-index = intensity < mode + std
-skyradius1 = asymtotic_fit_radius(rad[index],secondd[index])
-skyradius2 = asymtotic_fit_radius(rad[index],firstd[index])
-
-skyradii = np.sort([skyradius1,skyradius2])
-aperfactor = np.nanmax([0.01,float(np.round((60 - np.diff(skyradii)) / (np.sum(skyradii)),3))])
-
-width = float(np.nanmax([np.diff(skyradii),60]))
-
-bkg_aperture = EllipticalAnnulus((IMG.pix[0],IMG.pix[1]),
-                     (1-aperfactor)*skyradii[0], (1+aperfactor)*skyradii[1], 
-                    (1-0.6*IMG.eps)*(1-aperfactor)*skyradii[0], None,
-                    IMG.pa*np.pi/180)
-
-mask_aper = bkg_aperture.to_mask(method='center').to_image(IMG.data.shape)
-mask_aper = np.ma.array(mask_aper,mask=1-mask_aper)
-aper_values = IMG.data*mask_aper
-aper_values = aper_values[np.where(~aper_values.mask)].flatten()
-localsky, gauss_fit = find_mode(aper_values)
-
-
-
-out = os.path.join(folders.temp,f'{img.name}_background.jpg')
-if out: 
-    fig = plt.figure(figsize=(12,6))
-    ax1 = plt.subplot2grid((3,3),(0,0))
-    ax2 = plt.subplot2grid((3,3),(1,0),sharex=ax1)
-    ax3 = plt.subplot2grid((3,3),(2,0),sharex=ax1)
-    ax4 = plt.subplot2grid((3,3),(0,1),rowspan=3,colspan=2)
-    
-    fontsize = 12
-    ax1.plot(rad,intensity,'.', label='Flux')
-    ax1.set_ylabel('Intensity (ADUs)',fontsize=fontsize)
-    ax1.axhline(mode,ls='--',c='k',label='Mode')
-    ax1.axhline(mode-std,ls=':',c='k',label='Mode $\pm \sigma$')
-    ax1.axhline(mode+std,ls=':',c='k')
-    ax1.set_ylim([mode-std*0.5,mode+std*1.4])
-    arglim = np.nanargmin(np.abs(intensity-mode-std))
-    ax1.set_xlim([rad[arglim],1.1*np.nanmax(np.append(rad[-1],skyradii))])
-
-    ax2.plot(rad,firstd,'.')
-    ax2.set_ylabel('$dI/dr$',fontsize=fontsize)
-    ax2.axhline(0,ls='--',c='k')
-    ax2.axvline(skyradius2,ls='--',c='r',label='Sign change')
-    ax2.set_ylim([firstd[arglim],-firstd[arglim]/10])
-
-    ax3.plot(rad,secondd,'.')
-    ax3.set_ylabel('$d^2I/dr^2$',fontsize=fontsize)
-    ax3.set_xlabel('Radius (pixels)',fontsize=fontsize)
-    ax3.axhline(0,ls='--',c='k')
-    ax3.axvline(skyradius1,ls='--',c='r',label='Sign change')
-    ax3.set_ylim([-secondd[arglim]/10,secondd[arglim]])
-
-    for ax in [ax1,ax2,ax3]:
-        ax.axvline(bkg_aperture.a_in,ls='-.',c='magenta',label='Sky annulus')
-        ax.axvline(bkg_aperture.a_out,ls='-.',c='magenta')   
-
-
-    show(IMG.data - 2*localsky, vmin=-localsky, mask=True, ax=ax4)
-    imwidth=skyradii[0]+width//2
-    ax4.set_xlim([center[0]-imwidth,center[0]+imwidth])
-    ax4.set_ylim([center[1]-imwidth,center[1]+imwidth])
-    ax4.text(0.02, 1, os.path.basename(os.path.splitext(out)[0]), horizontalalignment='left',
-            verticalalignment='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
-    bkg_aperture.plot() 
-    ax1.axhline(localsky,ls='-.',c='magenta')
-    ax4.text(1, 1, f'localsky={localsky:.3e}', horizontalalignment='right',
-                verticalalignment='bottom', transform=ax4.transAxes,fontsize='large',color='magenta')
-    plt.tight_layout()
-
-
-# %%
-
-fig,ax = plt.subplots(1,1,figsize=(12,8))
-for sky in [-1.65, -0.3,-0.5, -0.65, -0.72, -0.82, -0.9, 0.4]:
-    ax.plot(rad, IMG.zp - 2.*np.log10((intensity-sky)/IMG.pixel_scale**2),label=f'{np.round(sky,2)}')
-ax.legend(ncol=4)
-ax.invert_yaxis()
-ax.set_xlabel('Radius (pixels)')
-ax.set_ylabel('Magnitude')
-ax.set_title(f'Changes due to sky subtraction mode={mode:.2f} local={localsky:.2f} $\sigma$={std:.2f}')
-plt.tight_layout()
-
-
-
-#%%  Break errors
-
-breaks = Table.read(breakFile,format='ascii.csv',delimiter=';')
-
-for i,gname in enumerate(breaks['Galaxy']):
-    profileFile = glob.glob(f'/Volumes/G-Drive/PhD/Data/AMIGAS/{gname}/AstroPipe_{gname}/{gname}*profile.fits')[0]
-    profile = Table.read(profileFile)
-    if np.isfinite(breaks['Radius'][i]):
-        argument = np.nanargmin(np.abs(profile['radius']-breaks['Radius'][i]))
-        sb = profile['surface_brightness'][argument]
-        error_bright = (profile['surface_brightness'][argument+1] - profile['surface_brightness'][argument-1])/2
-        error_radius = (profile['radius'][argument+1] - profile['radius'][argument-1])/2
-        print(f'{gname}: {sb:.2f} +- {error_bright:.1f}; {breaks["Radius"][i]} +- {np.ceil(error_radius):.0f}')
-
-

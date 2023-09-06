@@ -1,20 +1,26 @@
+import os
+import sys
 import numpy as np
 from termcolor import colored
 from astropy.cosmology import FlatLambdaCDM
 import astropy.units as u
 import cv2
+import fnmatch
 from copy import deepcopy
 from fabada import fabada
 import argparse
 from math import gamma
 
-from astropy.wcs import WCS
+from astropy.wcs import WCS, utils
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.stats import sigma_clipped_stats
 
 from scipy.signal import argrelextrema
 
 from photutils.centroids import centroid_com, centroid_quadratic, centroid_2dg
 
+import datetime
 
 
 
@@ -49,6 +55,40 @@ def convert_PA(angle):
     else:
         return angle
 
+def binarize(image, nsigma=1, mask=None):
+    """Binarize an image using a threshold of nsigma*std.
+    Statistics are computed with sigma clipped, then the 
+    image binarize is dilate to remove noise. 
+
+    Parameters
+    ----------
+        image : array_like
+            Image to binarize.
+        nsigma : float, optional
+            Number of sigma to use as threshold.
+        mask : array_like, optional
+            If use, mask is applied.
+    
+    Returns
+    -------
+        binary : array_like
+            Binarized image.
+    """
+    mask = None if mask is None else mask
+    if hasattr(image, 'mask'): 
+        if mask is None: mask = np.ma.getmask(image)
+        image = np.ma.getdata(image)
+
+    mean, median, std = sigma_clipped_stats(image, sigma=2.5, mask=mask, maxiters=2)
+    index = image > median+nsigma*std
+
+    binarize = np.zeros_like(image)
+    binarize[index * ~mask] = 1
+    binarize = cv2.erode(binarize, np.ones((5,5)), iterations=1)
+  
+    return binarize
+
+
 def morphologhy(binary):
     moments = cv2.moments(binary)
     
@@ -62,7 +102,7 @@ def morphologhy(binary):
     angle = 0.5*np.arctan2(2*xy,x2-y2)*180/np.pi
     eps = 1 - minor/major
 
-    return angle,major/2,eps
+    return angle,major,eps
 
 def rebin(arr, new_shape):
     shape = (new_shape[0], arr.shape[0] // new_shape[0],
@@ -95,43 +135,132 @@ def closest(data,value):
     return np.nanargmin(np.abs(data-value))
 
 
-def crop(IMG, width, out=None):
-
-    IMG.crop(IMG.pix, width=width)
-    IMG.set_data(IMG.cropped)
-    IMG.pix = np.array(width)
-
-    IMG.header['CRVAL1'] = IMG.ra
-    IMG.header['CRVAL2'] = IMG.dec
-
-    IMG.header['CRPIX1'] = IMG.pix[1]
-    IMG.header['CRPIX2'] = IMG.pix[0]
-
-    IMG.header['NAXIS1'] = 2*width[0]
-    IMG.header['NAXIS2'] = 2*width[1]
-
-
-    IMG.wcs = WCS(IMG.header)
-    IMG.hdu = 0
-
-    if out:
-        fits.PrimaryHDU(IMG.data,IMG.header).writeto(out,overwrite=True)
-        IMG.file = out
-
-
-def find_center(IMG,r_eff=20):
+def cutout(file, center, width, hdu=0, mode='image', out=None):
+    '''
+    Crop a fits file to a given width and center preserving the WCS. 
     
-    crop = IMG.data[np.int32(IMG.pix[1]-r_eff):np.int32(IMG.pix[1]+r_eff),
-                    np.int32(IMG.pix[0]-r_eff):np.int32(IMG.pix[0]+r_eff)]
-    # x1,y1 = centroid_com(crop)
+    Parameters
+    ----------
+        file: str
+            Fits file name.
+        center: tuple, optional
+            Center of the cropped image in pixels (image) or in degrees (wcs).
+
+        width: tuple
+            Width of the cropped image in pixels (image) or in degrees (wcs).
+        hdu: int, optional
+            HDU to crop. Default is 0.
+        mode: str, optional
+            'image' or 'wcs'.
+        out: str, optional
+            Output file name. Default is filename_crop.fits.
+
+    Returns
+    -------
+        out: str
+            Cropped fits file name.
+    '''
+    
+    data = fits.getdata(file,hdu)
+    header = fits.getheader(file,hdu)
+
+    if mode == 'wcs':
+        sky = SkyCoord(center[0], center[1], unit='deg')
+        wcs = WCS(header)
+        center = np.int64(wcs.world_to_pixel(sky))
+        width = np.int64(width / utils.proj_plane_pixel_scales(wcs))
+    elif mode == 'image':
+        center = np.int64(center)
+        width = np.int64(width)
+    else:
+        raise ValueError('mode must be image or wcs')
+
+    cropped, header = crop(data, header, center, width)
+
+    if out is None: out = file.replace('.fits','_crop.fits')
+    
+    fits.PrimaryHDU(cropped, header).writeto(out,overwrite=True)
+
+    return os.path.isfile(out)
+
+
+def crop(data, header, center, width, out=None):
+    '''
+    Funtion that crops a image given a center and a width updating the WCS
+    information in the header.
+
+    Parameters
+    ----------
+        data: array_like
+            Image to crop.
+        header: astropy.io.fits.header.Header
+            Header of the image.
+        center: tuple
+            Center of the cropped image in pixels.
+        width: tuple
+            Width of the cropped image in pixels.
+    
+    Returns
+    -------
+        new_data: array_like
+            Cropped image.
+        new_header: astropy.io.fits.header.Header
+            Header of the cropped image.    
+    '''
+    wcs = WCS(header)
+    center = np.int32(center)
+    width = np.int32(width)
+
+    new_data = data[center[1]-(width[1]//2 + 1):center[1]+width[1]//2,
+                    center[0]-(width[0]//2 + 1):center[0]+width[0]//2]
+
+    new_wcs = wcs[center[1]-(width[1]//2 + 1):center[1]+width[1]//2,
+                    center[0]-(width[0]//2 + 1):center[0]+width[0]//2]
+    
+    header.update(new_wcs.to_header())
+    header['COMMENT'] = "= Cropped fits file ({}).".format(datetime.date.today())
+    header['ICF1PIX'] = (f'{center[1]-(width[1]//2 + width[1]%2)}:{center[1]+width[1]//2},{center[0]-(width[0]//2 + width[0]%2)}:{center[0]+width[0]//2}',
+                          'Range of pixels used for this cutout')
+    
+    if out is not None: fits.PrimaryHDU(new_data, header).writeto(out, overwrite=True)
+    
+    return new_data, header 
+
+def flashprint(string):
+    print(string, end='\r')
+    sys.stdout.flush()
+
+
+
+def find_center(data, center, width=30):
+    '''
+    Find the center of an object in a cropped image.
+    It uses centroid_quadratic to find the center of the object.
+    It fist a quadractic function to the data and then
+    finds the maximum of the function.
+
+    Parameters
+    ----------
+        data: array
+            Image data.
+        center: tuple
+            Center of the object in the image.
+        width: int, optional
+            Width of the cropped image.
+    
+    Returns
+    -------
+        x,y: tuple
+            Center of the object in the image.
+    '''    
+
+    crop = data[np.int32(center[1]-width):np.int32(center[1]+width),
+                    np.int32(center[0]-width):np.int32(center[0]+width)]
+
     x,y = centroid_quadratic(crop)
-    # x3,y3 = centroid_2dg(crop)
-   
-    # I_array = np.array([crop[np.int32(y1),np.int32(x1)],crop[np.int32(y2),np.int32(x2)],crop[np.int32(y2),np.int32(x2)]])
-    # x = np.sum(np.array([x1,x2,x3])*I_array/np.sum(I_array))
-    # y = np.sum(np.array([y1,y2,y3])*I_array/np.sum(I_array))
-    x += np.int32(IMG.pix[0]-r_eff)
-    y += np.int32(IMG.pix[1]-r_eff)
+
+    x += np.int32(center[0]-width)
+    y += np.int32(center[1]-width)
     return x,y
 
 
@@ -169,6 +298,51 @@ def adaptive_histogram(data, bandwidth=None, weights=None):
     density = (cumul_mass[h:] - cumul_mass[:-h]) / (x[h:] - x[:-h])
     x_bin = np.sqrt(x_mid*x_median)
     return x_bin, density / data.size
+
+def change_coordinates(positions, center, pa):
+    rotMatrix = np.array([[np.cos(pa),-np.sin(pa)],
+                        [np.sin(pa),np.cos(pa)]])
+    newCoordinates = np.matmul(np.transpose(positions-center[:,np.newaxis]),rotMatrix)
+    return np.transpose(newCoordinates)
+
+from scipy import ndimage
+from matplotlib.colors import LogNorm
+
+# Funtion that given an numerical distribution finds the FWHM of the distribution
+def getFWHM(x,y, oversamp=100, height=False):
+    '''
+    Given a numerical distribution finds the FWHM of the distribution
+    interpolation is done to overcome undersampling offsets
+    
+    Parameters
+    ----------
+        x : numpy.ndarray
+            x-axis of the distribution
+        y : numpy.ndarray
+            y-axis of the distribution
+        oversamp : int
+            oversampling factor
+        height : bool
+            if True returns the height of the distribution at the FWHM
+
+    Returns
+    -------
+        fwhm : float
+            FWHM of the distribution
+    '''
+    xx = np.linspace(x[0],x[-1],len(x)*oversamp)
+    yy = np.interp(xx,x,y)
+
+    max_y = np.max(yy)
+    half_max = max_y/2
+    idx = np.where(yy >= half_max)[0]
+    fwhm = xx[idx[-1]] - xx[idx[0]]
+    if np.abs(yy[idx[-1]] - yy[idx[0]]) > max_y/2*len(idx):
+        raise Warning('FWHM is not well defined, check your distribution')
+    fwhm_y = (yy[idx[-1]] + yy[idx[0]])/2
+    
+    if not height: return fwhm
+    if height: return fwhm, fwhm_y
 
 
 def find_mode(x, weights=None):
@@ -220,7 +394,17 @@ def abs_mag(z, apparent_mag):
     distance = redshift_to_kpc(z)
     return apparent_mag - 5*np.log10(distance) + 5
 
+def find(inDIR='',filetype='*.fits'):
 
+    fileList = []
+    
+    # Walk through directory
+    for dName, sdName, fList in os.walk(inDIR):
+        for fileName in fList:
+            if fnmatch.fnmatch(fileName, filetype): # Match search string
+                fileList.append(os.path.join(dName, fileName))
+
+    return fileList
 
 # Computes the power spectrum of an image returns the power spectrum and the corresponding frequencies
 # def power_spectrum(image):

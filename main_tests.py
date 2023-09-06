@@ -4,8 +4,8 @@
 from AstroPipe.classes import image,SExtractor,AstroGNU,directories
 from AstroPipe.masking import automatic_mask, ds9_region_masking 
 from AstroPipe.utilities import where, check_print, redshift_to_kpc, make_parser,mag_limit, closest
-from AstroPipe.sbprofile import isophotal_photometry,isophotal_photometry_fix,rectangular_photometry
-from AstroPipe.sbprofile import aaron_break_finder
+from AstroPipe.profile import isophotal_photometry,isophotal_photometry_fix,rectangular_photometry
+from AstroPipe.profile import aaron_break_finder
 
 
 

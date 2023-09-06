@@ -110,8 +110,9 @@ def show_old(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
     # plt.tight_layout()
 
 def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
-            cmap='nipy_spectral_r', wcs=None, nan='cyan', mask=True, maskalpha=0.5):
-        
+            cmap='nipy_spectral_r', wcs=None, nan='cyan', mask=True, maskalpha=0.5,**kwargs):
+    
+    
     if len(np.shape(image)) == 2:    # Only one image
         if vmin == None or vmax == None:
             stats = sigma_clipped_stats(image, sigma=2.5)
@@ -130,13 +131,13 @@ def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
         else: fig=ax.get_figure()
 
         if not zp:
-            im = ax.imshow(data, norm=norm, cmap=cmap, origin='lower', interpolation='none')
-            fig.colorbar(im)
+            im = ax.imshow(data, norm=norm, cmap=cmap, origin='lower', interpolation='none',**kwargs)
+            fig.colorbar(im, ax=ax, shrink=0.6)
         else:
             mmax,mmin = counts_to_mu(np.array([vmin, vmax]),zp, pixel_scale)
             if np.isnan(mmax): mmax = counts_to_mu(np.nanpercentile(image[image>0],1))
-            im = ax.imshow(counts_to_mu(data,zp,pixel_scale),vmin=mmin, vmax=mmax, cmap=cmap, origin='lower', interpolation='none')
-            fig.colorbar(im)
+            im = ax.imshow(counts_to_mu(data,zp,pixel_scale),vmin=mmin, vmax=mmax, cmap=cmap, origin='lower', interpolation='none',**kwargs)
+            fig.colorbar(im, ax=ax, shrink=0.6)
         if hasmask and mask: ax.imshow(image.mask, origin='lower',cmap=mask_cmap(alpha=maskalpha))
         plt.tight_layout()
         return ax
@@ -160,14 +161,14 @@ def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
             hasmask = hasattr(ima, 'mask')
             if hasmask: data = ima.data
             else: data = ima
-            im = ax[i].imshow(data,norm=norm, origin = 'lower', cmap=cmap,interpolation='none')
+            im = ax[i].imshow(data,norm=norm, origin = 'lower', cmap=cmap,interpolation='none',**kwargs)
             if hasmask: ax[i].imshow(image.mask, origin='lower',cmap=mask_cmap(alpha=maskalpha))
 
         pos_bar = [0.1, 0.9, 0.8, 0.03]
         cax = fig.add_axes(pos_bar)
 
         if not zp:
-            fig.colorbar(im, cax=cax,orientation="horizontal", pad=0.2,format='%.0e')
+            fig.colorbar(im, cax=cax, orientation="horizontal", pad=0.2,format='%.0e')
             cax.xaxis.set_ticks_position("top")
         else:
             mmax,mmin = counts_to_mu(np.array([vmin,vmax]),zp, pixel_scale)
@@ -178,6 +179,26 @@ def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
             cax.xaxis.set_ticks_position("top")
         plt.tight_layout()
         return ax
+    
+def histplot(data):
+    '''
+    Creates histogram of the data given.
+    '''
+    mean,med,std = sigma_clipped_stats(data, sigma=2.5)
+    q25,q99 = np.nanpercentile(data,[25,99.9])
+    fig,ax = plt.subplots(1,1,figsize=(16,4))
+
+    ax.hist(data.flatten(),range=[mean-10*std, q99*1.1],bins=1000)
+    ax.axvline(med,color='red',ls=':')
+    ax.axvline(med-std,color='red',ls='--')
+    ax.axvline(med+std,color='red',ls='--')
+    ax.set_xlabel('Pixel intensity')
+    ax.set_ylabel('Pixel count')
+    ax.set_yscale('log')
+    fig.suptitle(fr'$\mu \pm \sigma$ = {mean:1.3e} $\pm$ {std:1.3e} $\,\,\,$ Median = {med:1.3e}',
+                 fontsize=16)
+    fig.tight_layout()
+    return fig,ax
 
 def displayimage(image, qmin=1, qmax=99, scale='linear',cmap='nipy_spectral_r'):           # with default arg 'title'
     interval = vis.AsymmetricPercentileInterval(qmin, qmax)
@@ -227,6 +248,7 @@ def displayimage(image, qmin=1, qmax=99, scale='linear',cmap='nipy_spectral_r'):
 
 
 
+
 def plot_ellipses(profile, step=1, ax=None,max_r=None, center=(0,0),color='black',**kwargs):
     if type(profile) == dict: profile = Table(profile)
     if not ax: ax = plt.subplot(111)
@@ -242,6 +264,21 @@ def plot_ellipses(profile, step=1, ax=None,max_r=None, center=(0,0),color='black
 
             ax.add_patch(ellipse_patch)
         i+=1
+    return ax
+
+def plot_ellipses_new(profile, step=1, ax=None, max_r=None, center=(0,0),color='black',**kwargs):
+    if type(profile) == dict: profile = Table(profile)
+    if not ax: ax = plt.subplot(111)
+    if not max_r: max_r = np.nanmax(profile['radius'])
+    i=0
+    for i,rad in enumerate(profile.rad):
+        if i%step==0 and rad<=max_r:
+            ellipse_patch = patches.Ellipse(center,
+                2*rad,
+                2*(rad * (1 - profile.eps[i])),
+                profile.pa[i],
+                color=color, fill=False, **kwargs)
+            ax.add_patch(ellipse_patch)    
     return ax
 
 
