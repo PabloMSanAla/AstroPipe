@@ -1,3 +1,6 @@
+''' 
+Modules for process Isaac Newton Telescope images. 
+'''
 
 import AstroPipe.calibration as cal
 from AstroPipe.classes import AstroGNU

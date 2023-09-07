@@ -70,4 +70,5 @@ Tests/*
 *.jpg
 *.xml
 *laboratory*
+*gui*
 

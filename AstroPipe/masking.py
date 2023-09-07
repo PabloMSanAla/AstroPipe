@@ -1,3 +1,12 @@
+''' 
+Module to create mask for a individual object (typicially a galaxy)
+in astronomical images. It uses some of the following software:
+   - SExtractor
+   - NoiseChisel [Gnuastro]
+   - MTObjects
+'''
+
+
 import pandas as pd
 import numpy as np
 from astropy.io import fits
@@ -39,6 +48,12 @@ point_sexcofing = {
             }
 
 def sigma_filter(catalog, columns, sigma=5, weights=None, colid = 'NUMBER'):
+    '''
+    Given a catalog and a colum id it filters values that are at a certain
+    distance os standard deviation using a sigma clipped statistics.
+
+    
+    '''
     if weights is None: weights = np.ones(len(catalog))
     index = np.ones(len(catalog)).astype(bool)
     for col in columns:
@@ -120,7 +135,7 @@ def sexmask(IMG, folders, plot=False):
     It has three steps:
         1. Run SExtractor with default parameters to detect objects
         2. Run SExtractor with default parameters to detect point sources
-        3. Run SExtractor in the residual image to detec point sources inside the galaxy
+        3. Run SExtractor in the residual image to detect point sources inside the galaxy
     The last two steps has a gaussian weight distance and area filter to avoid the masking 
     of extended inner regions of the galaxy.
     TODO: in (3) add filter of detected objects and only apply to nxReff of galaxy
