@@ -66,9 +66,15 @@ Thumbs.db
 *tests.py
 *.sh
 *.fits
-Tests/*
+
 *.jpg
 *.xml
 *laboratory*
 *gui*
+
+# Especific directories #
+#########################
+Tests/*
+gui/*
+gui-Andreu/*
 
