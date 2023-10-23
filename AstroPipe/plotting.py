@@ -1,3 +1,4 @@
+import AstroPipe.utils as ut
 import matplotlib.pyplot as plt
 import matplotlib 
 import numpy as np
@@ -46,7 +47,7 @@ def noise_hist(result,out=False):
     plt.legend()
     plt.tight_layout()
     if out:
-        fig.savefig(out,dpi=300)
+        fig.savefig(out,dpi=300,bbox_inches='tight', pad_inches=0.1)
     
 def counts_to_mu(counts, zp, pixel_scale):
     return zp - 2.5*np.log10(counts/pixel_scale**2)
@@ -109,20 +110,40 @@ def show_old(image,vmin=None,vmax=None,zp=None, pixel_scale=1,
 
     # plt.tight_layout()
 
-def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
-            cmap='nipy_spectral_r', wcs=None, nan='cyan', mask=True, maskalpha=0.5,**kwargs):
+def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1, mask=None,
+            cmap='nipy_spectral_r', wcs=None, nan='cyan', plotmask=True, maskalpha=0.5,**kwargs):
+    ''' 
+    Function to visualize astronomical images in logaritmic scales. 
     
+    '''
     
     if len(np.shape(image)) == 2:    # Only one image
-        if vmin == None or vmax == None:
-            stats = sigma_clipped_stats(image, sigma=2.5)
-        if vmin == None: vmin = stats[1] - 1.5*stats[2]
-        if vmax == None: vmax = np.nanmax([np.nanpercentile(image.data,99.9), stats[1] + 25*stats[2]])
-        
+
+        # Define vmin and vmax either in units of image or magnitudes
+        if vmin is None or vmax is None:
+            _,median,std = sigma_clipped_stats(image, sigma=2.5)
+            if zp is None:
+                if vmin is None: vmin = median - 1.5*std
+                if vmax is None: vmax = np.nanmax([np.nanpercentile(image.data,99.9), median + 25*std])
+            else:
+                if vmin is None: vmin = counts_to_mu(np.nanmax([np.nanpercentile(image.data,99.9), 
+                                                        median + 25*std]), zp, pixel_scale)
+                if vmax is None: vmax = counts_to_mu(median - 1.5*std, zp, pixel_scale) 
+        vmin = 19 if np.isnan(vmin) else vmin
+        vmax = ut.mag_limit(std, Zp=zp, scale=pixel_scale) - 1.5 if np.isnan(vmax) else vmax
+
+        # Check if data is a masked array to plot mask
         hasmask = hasattr(image, 'mask')
-        if hasmask: data = image.data
+        if hasmask: 
+            data = image.data
+            if mask is None: mask = image.mask
         else: data = image
 
+        # Don't plot if mask is None
+        if mask is None:
+            plotmask = False
+
+        # if vmin is negative, small offset to work with LogNorm
         if vmin < 0: data = data - 2*vmin; vmin = -vmin
         norm = LogNorm(vmin=vmin, vmax=vmax)
 
@@ -130,15 +151,13 @@ def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1,
         if not ax: fig,ax = plt.subplots(1,1)
         else: fig=ax.get_figure()
 
-        if not zp:
+        if not zp: # plot using norm if not calibrate
             im = ax.imshow(data, norm=norm, cmap=cmap, origin='lower', interpolation='none',**kwargs)
             fig.colorbar(im, ax=ax, shrink=0.6)
-        else:
-            mmax,mmin = counts_to_mu(np.array([vmin, vmax]),zp, pixel_scale)
-            if np.isnan(mmax): mmax = counts_to_mu(np.nanpercentile(image[image>0],1))
-            im = ax.imshow(counts_to_mu(data,zp,pixel_scale),vmin=mmin, vmax=mmax, cmap=cmap, origin='lower', interpolation='none',**kwargs)
+        else: # plot using magnitudes
+            im = ax.imshow(counts_to_mu(data, zp, pixel_scale), vmin=vmin, vmax=vmax, cmap=cmap, origin='lower', interpolation='none',**kwargs)
             fig.colorbar(im, ax=ax, shrink=0.6)
-        if hasmask and mask: ax.imshow(image.mask, origin='lower',cmap=mask_cmap(alpha=maskalpha))
+        if (mask is not None) and plotmask: ax.imshow(mask, origin='lower', cmap=mask_cmap(alpha=maskalpha))
         plt.tight_layout()
         return ax
 
@@ -200,6 +219,90 @@ def histplot(data):
     fig.tight_layout()
     return fig,ax
 
+def surface_figure(image, profile, out=None, **kwargs):
+    '''Function that creates a figure with the image, the profile and the mask.
+     In the first axes will show the surface brightness image, 
+    in the second the image with the mask and the ellipses fit to create the profile
+    in the last column, it will show the profile of the image with its 
+    morphological parameters. 
+    
+    Parameters
+    ----------
+        image : AstroPipe.Image
+            Image object to plot.
+        profile : AstroPipe.Profile
+            Profile object to plot.
+        out : str, optional
+            Path to save the figure. If None, the figure will not be saved.
+        **kwargs : dict, optional
+        
+    Returns
+    -------
+        fig : matplotlib.figure.Figure
+            Figure object.
+    '''
+
+    fig = plt.figure(figsize=(11.5,4))
+    axim = plt.subplot2grid((5,3),(0,0),rowspan=5)
+    axmask = plt.subplot2grid((5,3),(0,1),rowspan=5, sharex=axim)
+    axmu = plt.subplot2grid((5,3),(0,2),rowspan=3)
+    axpa = plt.subplot2grid((5,3),(3,2),rowspan=1,sharex=axmu)
+    axeps = plt.subplot2grid((5,3),(4,2),rowspan=1,sharex=axmu)
+
+    # Properties
+    extent = np.array([-image.x,image.data.shape[1]-image.x,
+                    -image.y,image.data.shape[0]-image.y]).astype(float)
+    extent *= image.pixel_scale
+
+    specs = {'vmin':20, 'vmax':26, 'cmap':'nipy_spectral', 
+            'origin':'lower', 'interpolation':'none', 'extent':extent}
+    
+    for key in kwargs: specs[key] = kwargs[key]
+
+    # Showing images and profile
+    magnitude = image.zp - 2.5*np.log10(image.data.data - image.bkg) + 5*np.log10(image.pixel_scale) 
+    im = axim.imshow(magnitude, **specs)
+    axmask.imshow(magnitude, **specs)
+    axmask.imshow(image.data.mask, origin='lower',cmap=mask_cmap(alpha=0.5), extent=extent)
+    axmask = plot_ellipses(profile.rad*image.pixel_scale, profile.pa, profile.eps, 
+                        np.array((profile.x-image.x, profile.y-image.y)), ax=axmask, step=5,alpha=0.6)
+
+    fig = profile.plot(axes=(axmu,axpa,axeps))
+
+    # Properties 
+    for ax in [axim, axmask]:
+        ax.set_xlim(profile.rad[-1]*image.pixel_scale*np.array([-1,1]))
+        ax.set_ylim(profile.rad[-1]*image.pixel_scale*np.array([-1,1]))
+        ax.set_xlabel('Distance [arcsec]',fontsize=14)
+        
+    for ax in [axmu,axeps,axpa]:
+        ax.yaxis.set_label_position("right")
+        ax.yaxis.set_ticks_position("right")
+        ax.yaxis.set_ticks_position('both')
+        ax.yaxis.set_tick_params(labelsize=8)
+
+    axim.set_ylabel('Distance [arcsec]',fontsize=14)
+    axmask.set_yticklabels([])
+    axim.text(1.0, 1.0, image.name, va='bottom', ha='right',
+            transform=axim.transAxes, fontweight='bold')
+
+    # Colorbar inside profile axes
+    cbarax = axmu.inset_axes([0.9*profile.rad[-1]*image.pixel_scale, specs['vmin'], 
+                            0.05*profile.rad[-1]*image.pixel_scale, specs['vmax']-specs['vmin']],
+                transform=axmu.transData)
+    cbar = fig.colorbar(im, cax=cbarax)
+    cbarax.axis('off')
+    cbarax.invert_yaxis()
+
+    fig.subplots_adjust(top=0.915, bottom=0.09,
+                        left=0.045, right=0.95,
+                        hspace=0.3, wspace=0.1)
+    if out:
+        fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
+
+    return fig
+
+
 def displayimage(image, qmin=1, qmax=99, scale='linear',cmap='nipy_spectral_r'):           # with default arg 'title'
     interval = vis.AsymmetricPercentileInterval(qmin, qmax)
     vmin, vmax = interval.get_limits(image)
@@ -246,10 +349,19 @@ def displayimage(image, qmin=1, qmax=99, scale='linear',cmap='nipy_spectral_r'):
 
     plt.tight_layout()
 
+def plot_ellipses(radius, pa, eps, center, ax=None, color='black', step=1, max_r=None, **kwargs):
+    if not ax: ax = plt.subplot(111)
+    if not max_r: max_r = np.nanmax(radius)
+    for i in range(len(radius)):
+        if i%step==0 and radius[i]<max_r:
+            ellipse_patch = patches.Ellipse(center[:,i],
+                2*radius[i],2*(radius[i] * (1 - eps[i])),
+                pa[i], color=color, fill=False, **kwargs)
+            ax.add_patch(ellipse_patch)
+    return ax
 
 
-
-def plot_ellipses(profile, step=1, ax=None,max_r=None, center=(0,0),color='black',**kwargs):
+def plot_ellipses_old(profile, step=1, ax=None,max_r=None, center=(0,0),color='black',**kwargs):
     if type(profile) == dict: profile = Table(profile)
     if not ax: ax = plt.subplot(111)
     if not max_r: max_r = np.nanmax(profile['radius'])

@@ -1,8 +1,6 @@
 
-
-
-from . import utilities as ut
-from .plotting import show
+from AstroPipe import utils as ut
+from AstroPipe.plotting import show
 
 import numpy as np 
 import os
@@ -25,7 +23,7 @@ from matplotlib.colors import LogNorm
 
 from scipy import stats
 from scipy.ndimage import median_filter
-from scipy.signal import medfilt,argrelextrema
+from scipy.signal import medfilt, argrelextrema
 
 
 from lmfit.models import GaussianModel
@@ -183,10 +181,10 @@ class Profile:
     def skycenter(self, WCS):
         self.ra, self.dec = pixel_to_skycoord(self.x, self.y, WCS)
     
-    def plot(self, ax=None, color='r', label=None, **kwargs):
+    def plot(self, axes=None, color='r', label=None, **kwargs):
         label = self.type if label is None else label
         fig = plot_profile(self.rad*self.pixscale, self.mu, self.pa, self.eps, self.upperr, self.lowerr, 
-                           ax=ax, color=color, label=label, **kwargs)
+                           axes=axes, color=color, label=label, **kwargs)
         return fig
 
     def extend(self, array, max_radius, growth_rate=None):
@@ -238,7 +236,7 @@ class Profile:
                         table.meta['BKG'], table.meta['BKGSTD'], table.meta['ZP'], table.meta['PIXSCALE'])
     
 
-def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, ax=None, color='k', label=None, **kwargs):
+def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, axes=None, color='k', label=None, **kwargs):
     '''
     Function to plot the surface brightness profile of a galaxy
     and the elliptical parameters used in the photometry (eps and pa).
@@ -254,14 +252,33 @@ def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, ax=None, color='
             Position angle of the galaxy [deg]
         eps : float
             Ellipticity of the galaxy 
+        mupper : array
+            Upper error of the surface brightness [mag*arcsec^-2]
+        mlower : array
+            Lower error of the surface brightness [mag*arcsec^-2]
+        ax : tuple of matplotlib.axes
+            Axes to plot the profile, eps and pa
+        color : str
+            Color of the profile
+        label : str
+            Label of the profile
+        **kwargs : dict
+            Additional arguments to pass to the plot function
+    
+    Returns
+    -------
+        fig : matplotlib.figure
+            Figure with the profile and the parameters
     '''
 
-    # if ax is None: fig,ax = plt.subplots(1,1)
-    fig = plt.figure(figsize=(5,6))
-    axeps = plt.subplot2grid((5,1),(4,0))
-    axmu = plt.subplot2grid((5,1),(0,0),rowspan=3,sharex=axeps)
-    axpa = plt.subplot2grid((5,1),(3,0),sharex=axeps)
-    
+    if axes is None: 
+        fig = plt.figure(figsize=(5,6))
+        axeps = plt.subplot2grid((5,1),(4,0))
+        axmu = plt.subplot2grid((5,1),(0,0),rowspan=3,sharex=axeps)
+        axpa = plt.subplot2grid((5,1),(3,0),sharex=axeps)
+    else:
+        axmu, axpa, axeps = axes
+        fig = axmu.get_figure()
 
     # Surface Brightness plot
     axmu.plot(radius, mu, color=color, label=label, **kwargs)
@@ -462,7 +479,7 @@ def isophotal_photometry(data, center, pa, eps, reff,  max_r=None, growth_rate=1
         pa=isolist.pa*180/np.pi, eps=isolist.eps, center=(isolist.x0, isolist.y0))
     
     if plot is not None:
-        fig,ax = plt.subplots(1,1,figsize=(8,8))
+        fig, ax = plt.subplots(1,1,figsize=(8,8))
         show(data, ax=ax)
         for i,rad in enumerate(profile.rad):
             ap = EllipticalAperture(
@@ -475,7 +492,7 @@ def isophotal_photometry(data, center, pa, eps, reff,  max_r=None, growth_rate=1
         fig.savefig(plot, dpi=200, bbox_inches='tight', pad_inches=0.1)
 
     if save is not None:
-        profile.write(save.split('.')[-2]+'_static.fits',overwrite=True)
+        profile.write(save, overwrite=True)
 
     return profile
 
@@ -729,6 +746,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
         bkg_radius:  float
             Limiting radius where the background is reached.
     '''
+    if not hasattr(data,'mask'): data = np.ma.array(data, mask=np.zeros_like(data))
     pa = pa*np.pi/180 # convert to radians
     
     # First guess of the mode value
@@ -794,15 +812,20 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
                     (1-0.6*eps)*(1-aperfactor)*skyradii[0], None,
                     pa)
 
+    # Measure the background using the elliptical annulus
     mask_aper = bkg_aperture.to_mask(method='center').to_image(data.shape)
     mask_aper = np.ma.array(mask_aper,mask=1-mask_aper)
     aper_values = data*mask_aper
     aper_values = aper_values[np.where(~aper_values.mask)].flatten()
     localsky, gauss_fit = find_mode(aper_values)  
+    aper_bkg = gauss_fit.params['center'].value
+    aper_bkgstd = gauss_fit.params['sigma'].value/np.sqrt(aper_values.size)
 
 
     # Renctangular Apertures
-    rect = random_rectangular_boxes(center,-pa, np.mean(skyradii), 0.6*eps, n=np.int64(3*np.mean(skyradii)/(width)), wbox=width*0.8)
+    n_boxes = np.int64(3*np.mean(skyradii)/(width))
+    width_boxes = width*0.8
+    rect = random_rectangular_boxes(center,-pa, np.mean(skyradii), 0.6*eps, n=n_boxes, wbox=width_boxes)
 
     res_stats = []
     for r in rect:
@@ -811,25 +834,31 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
         mean,med,std = sigma_clipped_stats(aper_val.flatten())
         res_stats.append(med)
 
+    # Use rectangular localsky estimate
     localsky = np.nanmedian(res_stats)
     localsky_std = np.nanstd(res_stats)/np.sqrt(np.sum(~np.isnan(res_stats)))
 
+    # Plotting
     if out is not None: 
-        fig = plt.figure(figsize=(12,6))
-        ax1 = plt.subplot2grid((3,3),(0,0))
-        ax2 = plt.subplot2grid((3,3),(1,0),sharex=ax1)
-        ax3 = plt.subplot2grid((3,3),(2,0),sharex=ax1)
-        ax4 = plt.subplot2grid((3,3),(0,1),rowspan=3,colspan=2)
+        fig = plt.figure(figsize=(12,8))
+        ax1 = plt.subplot2grid((4,3),(1,0))
+        ax2 = plt.subplot2grid((4,3),(2,0),sharex=ax1)
+        ax3 = plt.subplot2grid((4,3),(3,0),sharex=ax1)
+        ax4 = plt.subplot2grid((4,3),(1,1),rowspan=3,colspan=2)
+        axtext = plt.subplot2grid((4,3),(0,0),colspan=2)
+        axtext.axis('off')
         
         fontsize = 12
-        ax1.plot(rad,intensity,'.', label='Flux')
+        ax1.plot(rad,intensity,'.')
         ax1.set_ylabel('Intensity (ADUs)',fontsize=fontsize)
         ax1.axhline(mode,ls='--',c='k',label='Mode')
-        ax1.axhline(mode-std,ls=':',c='k',label='Mode $\pm \sigma$')
-        ax1.axhline(mode+std,ls=':',c='k')
-        ax1.set_ylim([mode-std*1.6,mode+std*1.4])
+        ax1.axhline(mode+std,ls=':',c='k',label='Mode $\pm \sigma$')
+        ax1.axhline(aper_bkg, ls='-.', c='magenta', label='Aperture')
+        ax1.axhline(localsky, ls='-.', c='green', label='Boxes')
+        ax1.set_ylim([mode-std*0.3,mode+std*1.4])
         arglim = np.nanargmin(np.abs(intensity-mode-std))
         ax1.set_xlim([rad[arglim],1.1*np.nanmax(np.append(rad[-1],skyradii))])
+        ax1.legend(fontsize=10,loc='upper left',ncol=2, frameon=False)
 
         ax2.plot(rad,dIdr,'.')
         ax2.set_ylabel('$dI/dr$',fontsize=fontsize)
@@ -847,20 +876,41 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
         for ax in [ax1,ax2,ax3]:
             ax.axvline(bkg_aperture.a_in,ls='-.',c='magenta',label='Sky annulus')
             ax.axvline(bkg_aperture.a_out,ls='-.',c='magenta')       
-        
-        show(data, vmin=localsky, mask=True, ax=ax4)
+            ax.ticklabel_format(axis='y', style='sci',scilimits=(0,0)) 
+
+        show(data-localsky, vmin=gauss_fit.params['sigma'].value, ax=ax4)
         width=1.2*skyradii[1]
         ax4.set_xlim([center[0]-width,center[0]+width])
         ax4.set_ylim([center[1]-width,center[1]+width])
-        ax4.text(0.02, 1, os.path.basename(os.path.splitext(out)[0]), horizontalalignment='left',
-                verticalalignment='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
-        bkg_aperture.plot()
-        ax1.axhline(localsky,ls='-.',c='magenta')
-        ax4.text(1, 1, f'localsky={localsky:.3e}', horizontalalignment='right', color='magenta', fontweight='bold',
-                    verticalalignment='bottom', transform=ax4.transAxes,fontsize='large')
+        bkg_aperture.plot(axes=ax4,color='black',lw=1)
+        
+
+        text = f'''\
+Background estimation using elliptical apertures of \
+{os.path.basename(os.path.splitext(out)[0])} 
+_____________________________________________________________________________
+
+center = ({center[0]:.2f} , {center[1]:.2f})     \
+PA = {pa*180/np.pi:.2f} degrees [x to y]     \
+Ellipticity = {eps:.2f}
+
+Background Meassured in an elliptical annulus of width {skyradii[1]-skyradii[0]:.2f} pixels
+Mode  = {aper_bkg:.3e} +- {gauss_fit.params['center'].stderr:.3e}      \
+Sigma = {gauss_fit.params['sigma'].value:.3e} +- {gauss_fit.params['sigma'].stderr:.3e}
+Background = {aper_bkg:.3e} +- {aper_bkgstd:.3e}
+
+Background Meassured in {n_boxes:d} boxes of width {width_boxes:.2f} pixel \
+at a distance of {float(np.nanmax([rad[-1],maxr])):.2f} pixels from the center
+Background = {localsky:.3e} +- {localsky_std:.3e}
+'''
+
+        axtext.text(0.05, 1.05, text,
+            ha='left', va='top', transform=axtext.transAxes, fontsize=10)
         rect.plot(axes=ax4,color='black')
-        plt.tight_layout()
-        plt.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
+        fig.subplots_adjust(hspace=0.4)
+        ax4.text(0.02, 1.05, os.path.basename(os.path.splitext(out)[0]), horizontalalignment='left',
+                verticalalignment='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
+        fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
 
     return localsky, localsky_std, float(np.nanmax([rad[-1],maxr]))
 

@@ -1,9 +1,9 @@
-from . import classes
-from . import catalog
-from . import masking
-from . import plotting
-from . import psf
-from . import profile
-from . import utilities
+from AstroPipe.classes import *
+from AstroPipe.catalog import *
+from AstroPipe.masking import *
+from AstroPipe.plotting import *
+from AstroPipe.psf import *
+from AstroPipe.profile import *
+from AstroPipe.utils import *
 
 __version__ = '0.1'

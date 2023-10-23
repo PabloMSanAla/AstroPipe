@@ -45,7 +45,12 @@ def kpc_to_arcsec(kpc,distance):
     arcsec_to_rad = np.pi/(180*3600)
     return (kpc)/(arcsec_to_rad*distance)
 
-def arcsec_to_kpc(arcsec,distance):
+def arcsec_to_kpc(arcsec, distance):
+    '''Funtion that given a angular size of an object
+    and its physical distance it converts it into the
+    physical size in same units.
+    
+      '''
     arcsec_to_rad = np.pi/(180*3600)
     return arcsec*arcsec_to_rad*distance
 
@@ -87,6 +92,7 @@ def binarize(image, nsigma=1, mask=None):
     binarize = cv2.erode(binarize, np.ones((5,5)), iterations=1)
   
     return binarize
+
 
 
 def morphologhy(binary):
@@ -175,6 +181,7 @@ def cutout(file, center, width, hdu=0, mode='image', out=None):
     else:
         raise ValueError('mode must be image or wcs')
 
+    
     cropped, header = crop(data, header, center, width)
 
     if out is None: out = file.replace('.fits','_crop.fits')
@@ -345,7 +352,7 @@ def getFWHM(x,y, oversamp=100, height=False):
     if height: return fwhm, fwhm_y
 
 
-def find_mode(x, weights=None):
+def find_mode_2(x, weights=None):
     """
     Locate the mode of a distribution by fitting a polynomial within +-one-sigma interval.
     :param x: Collection of data points

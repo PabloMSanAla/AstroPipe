@@ -25,7 +25,7 @@ from photutils.segmentation import detect_sources
 from fabada import fabada
 
 from .classes import SExtractor, AstroGNU, MTObjects
-from .utilities import where, change_coordinates
+from .utils import where, change_coordinates
 
 from astropy.stats import sigma_clipped_stats
 from scipy.ndimage import gaussian_filter
@@ -49,10 +49,21 @@ point_sexcofing = {
 
 def sigma_filter(catalog, columns, sigma=5, weights=None, colid = 'NUMBER'):
     '''
-    Given a catalog and a colum id it filters values that are at a certain
-    distance os standard deviation using a sigma clipped statistics.
+    Given a catalog and a colum ID, it filters values that are at a certain
+    distance of the standard deviation compute using sigma clipped statistics.
 
-    
+    Parameters
+    ----------
+        catalog : astropy.table.Table
+            Catalog with the data
+        columns : list
+            List of columns to filter
+        sigma : float, optional
+            Number of sigma to filter
+        weights : array, optional
+            Array of weights to apply to the columns values
+        colid : str, optional
+            Column ID of the catalog
     '''
     if weights is None: weights = np.ones(len(catalog))
     index = np.ones(len(catalog)).astype(bool)
@@ -99,6 +110,8 @@ def get_peaks(data, mask=None, verbose=False):
     peaks[peaks==0] = np.nan
     return peaks
 
+
+
 def sharp_mask(data, C=7, W=5, mask=False, enhace=True):
     '''
     Contrast Enhancement using Digital Unsharp Masking
@@ -128,7 +141,7 @@ def increase_mask(mask, shape=(3,3)):
     return cv2.dilate(mask,np.ones(shape)/np.prod(shape), iterations=1)
 
 
-def sexmask(IMG, folders, plot=False):
+def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
     '''
     Use SExtractor to create a mask of the image
     We run FABADA to enhace the object and improve the detection.
@@ -239,7 +252,7 @@ def sexmask(IMG, folders, plot=False):
 
     for ind in sigma_filter(midsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE'],
                         sigma=3, weights=weights[index]):
-        if midsex.catalog['CLASS_STAR'][ind-1] < 0.5:
+        if midsex.catalog['CLASS_STAR'][ind-1] < 0.8:
             midsex.objects[np.where(midsex.objects == ind)] = 0
 
     midsex.objects = increase_mask(midsex.objects,shape=(3,3))
@@ -254,6 +267,7 @@ def sexmask(IMG, folders, plot=False):
                         'PIXEL_SCALE' : IMG.pixel_scale,
                         "DEBLEND_MINCONT": 0.005,
                         "DEBLEND_NTHRESH": 32,
+                        'DETECT_MINAREA': fwhm/IMG.pixel_scale, 
                         "BACK_SIZE": 64,
                         'DETECT_THRESH': 0.9,
                         'PHOT_FLUXFRAC': 0.5,
@@ -277,7 +291,10 @@ def sexmask(IMG, folders, plot=False):
     for ind in sigma_filter(pointsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE'], 
                             sigma=3, weights=weights[index]):
         pointsex.objects[np.where(pointsex.objects == ind)] = 0
-
+    for ind in index:
+        if pointsex.catalog['FWHM_IMAGE'][ind-1] < fwhm*1.2:
+            pointsex.objects[np.where(pointsex.objects == ind)] = 0
+    
     pointsex.objects = increase_mask(pointsex.objects, shape = (2,2))
 
     IMG.data.mask[np.where(pointsex.objects != 0)] = 1
@@ -293,10 +310,14 @@ def sexmask(IMG, folders, plot=False):
     mask_array = np.array(IMG.data.mask, dtype = np.uint8)
     fits.PrimaryHDU(mask_array, header=IMG.header).writeto(folders.mask,overwrite=True)
 
-    if plot: 
+    if plot: # Save a plotting result with the image and the mask
         IMG.show(width=300)
         plt.savefig(os.path.join(folders.out,IMG.name+'_mask.jpg'), dpi=300, bbox_inches='tight', pad_inches=0.1)
 
+    if not temp:  # Remove temporary files
+        os.remove(os.path.join(folders.temp,f'{IMG.name}_masked.fits'))
+        os.remove(os.path.join(folders.temp,f'{IMG.name}_sex.fits'))
+    
     return os.path.isfile(folders.mask)
 
 def mtomask(IMG, folders, plot=False):

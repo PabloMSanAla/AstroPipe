@@ -15,20 +15,21 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import matplotlib
 import os
+from os.path import join
 import subprocess
 
 from lmfit.models import GaussianModel
 
 import copy
 
-from ctypes import c_float, c_double
-from mtolib import _ctype_classes as ct
-from mtolib.tree_filtering import filter_tree, get_c_significant_nodes, init_double_filtering
-from mtolib import postprocessing
-import mtolib.main as mto
+# from ctypes import c_float, c_double
+# from mtolib import _ctype_classes as ct
+# from mtolib.tree_filtering import filter_tree, get_c_significant_nodes, init_double_filtering
+# from mtolib import postprocessing
+# import mtolib.main as mto
 
 from .plotting import noise_hist, make_cmap, show
-from .utilities import *
+from .utils import *
 from .profile import background_estimation, isophotal_photometry, elliptical_radial_profile
 
 
@@ -38,13 +39,23 @@ import sewpy
 
 class Image:
     '''
-    Image class to work with astronomical images.
-    To initiate the image class we need:
-    - filename: the name of the fits file
-    - hdu: (default 0) the hdu of the fits file
-    - zp: (default 22.5) the zeropoint of the image    
+    Image class to work with astronomical images. 
+
+    Attributes
+    ----------
+        data :
     '''
     def __init__(self, filename, hdu=0, zp=22.5):
+        '''
+        Initialize class by reading image fits file. 
+        
+        Parameters
+        ----------
+        filename : str
+            Name of the image fits file
+        hdu : int, optional
+            HDU exten
+        '''
 
         self.data = fits.getdata(filename, hdu)
         self.header = fits.getheader(filename, hdu)
@@ -54,11 +65,23 @@ class Image:
         self.directory = os.path.dirname(self.file)
         self.name, self.extension = os.path.splitext(self.file)
         self.name = os.path.basename(self.name)
-        self.bkg = 0
+        self.bkg, self.bkgstd = 0,0
         self.zp = zp 
         self.hdu = hdu
 
     def obj(self, ra, dec):
+        '''Defines de equatorial coordinates of the object
+        of interest in the image.
+        Parameters
+        ----------
+            ra : float
+                Right ascension of the object in degrees.
+            dec : float
+                Declination of the object in degrees.
+        Returns
+        -------
+            None
+        '''
         self.ra = ra
         self.dec = dec
         self.SkyCoord = SkyCoord(ra, dec, frame="fk5", unit="deg")
@@ -67,14 +90,61 @@ class Image:
         )
         self.pix = np.array([np.float64(self.pix[0]),
                             np.float64(self.pix[1])])
+        self.x = np.int64(self.pix[0])
+        self.y = np.int64(self.pix[1])
 
     def obj_id(self, mask):
+        '''
+        Finds object ID in a given segmentation mask
+        an saves it in an attribute.
+
+        Parameters
+        ----------
+            mask : numpy array
+                Segmentation mask of the image.
+        Returns
+        -------
+            None
+
+        '''
         self.id = mask.objects[int(self.pix[1]), int(self.pix[0])]
 
     def sky_to_pixel(self, ra, dec):
+        '''
+        Use the WCS of the image to convert sky coordinates
+        to pixel coordinates. Using astropy SkyCoord.
+
+        Parameters
+        ----------
+            ra : float
+                Right ascension of the object in degrees.
+            dec : float
+                Declination of the object in degrees.
+        
+        Returns
+        -------
+            (xp, yp) : numpy.ndarray
+                Pixel coordinates of the object.
+        '''
         return skycoord_to_pixel(SkyCoord(ra, dec, frame="fk5", unit="deg"), self.wcs)
 
     def pixel_to_sky(self, xp, yp):
+        '''
+        Convert pixel coordinates to sky coordinates using
+        the WCS of the image. Using astropy pixel_to_skycoord.
+
+        Parameters
+        ----------
+            xp : float
+                x coordinate of the object in pixels.
+            yp : float
+                y coordinate of the object in pixels.
+        
+        Returns
+        -------
+            (ra, dec) : ~astropy.coordinates.SkyCoord
+                Sky coordinates of the object.
+        '''
         return pixel_to_skycoord(xp, yp, self.wcs)
 
     def noise(self,mask,plot=False):
@@ -93,14 +163,53 @@ class Image:
             noise_hist(result,out=plot)
         
     def crop(self, center, width=(500,500)):
+        '''
+        Use the AstroPipe.utils.crop function to crop the image
+        given a center and width. It updates the data and header 
+        attributes of the class preserving the WCS information 
+        It also saves the parameters of the cropping procedoure 
+        in an attribute.
+
+        Parameters
+        ----------
+            center : tuple
+                (x,y) coordinates of the center of the crop.
+            width : tuple, optional
+                (width_x, width_y) of the crop.
+        
+        Returns
+        -------
+            None
+        '''
+
         self.data, self.header = crop(self.data, self.header, center, width)
         self.cropParams = {'center': np.int64(center),
                             'width': np.int64(width)}
     
     def copy(self):
+        '''Method to copy the class in another variable
+        '''
         return copy.deepcopy(self)
 
     def radial_photometry(self,  growth_rate = 1.03, max_r = None, plot=None, save=None):
+        '''Method to calculate the radial profile of the object
+        using the morphological parameters of the object.
+        
+        Parameters
+        ----------
+            growth_rate : float, optional
+                Growth rate of the radial bins.
+            max_r : float, optional
+                Maximum radius to calculate the profile.
+            plot : str, optional
+                Name of the file to save the plot.
+            save : str, optional
+                Name of the file to save the profile.
+        
+        Returns
+        -------
+            profile : AstroPipe.profile.Profile
+                Radial profile of the object.'''
 
         max_r = 2*self.bkg_radius if max_r is None else max_r
     
@@ -114,7 +223,32 @@ class Image:
 
     def isophotal_photometry(self, max_r=None, plot=None, save=None, 
                             fix_center=True, fix_pa=False, fix_eps=False):
-
+        '''Method to calculate the radial profile of the object
+        fitting the morphological parameters of the object for 
+        each isophote.
+        
+        Parameters
+        ----------
+            growth_rate : float, optional
+                Growth rate of the radial bins.
+            max_r : float, optional
+                Maximum radius to calculate the profile.
+            plot : str, optional
+                Name of the file to save the plot.
+            save : str, optional
+                Name of the file to save the profile.
+            fix_center : bool, optional [True]
+                Fix the center of the object to the center of the image.
+            fix_pa : bool, optional [False]
+                Fix the position angle of the object to the value in the header.
+            fix_eps : bool, optional [False]
+                Fix the ellipticity of the object to the value in the header.
+        
+        Returns
+        -------
+            profile : AstroPipe.profile.Profile
+                Radial profile of the object.'''
+        
         profile = isophotal_photometry(self.data, self.pix, self.pa, self.eps, self.reff,
                                     max_r=max_r, plot=plot, save=save,
                                     fix_center=fix_center, fix_pa=fix_pa, fix_eps=fix_eps)
@@ -124,28 +258,35 @@ class Image:
         profile.brightness()
         return profile
     
-    def show(self, ax=None, vmin=None, vmax=None, cmap='nipy_spectral_r',
-                    width=400, mask=True):
-        data = self.data
-        if self.bkg < 0: 
-            data = data - 2*self.bkg
-            vmin = -self.bkg
-        else: 
-            data = data - self.bkg
-        if (self.bkg!=0) and (vmin is None): ax = show(data, ax=ax, vmin=self.bkg, vmax=vmax, cmap=cmap, mask=mask)
-        else: ax = show(data, ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, mask=mask)
+    def show(self, ax=None, vmin=None, vmax=None, cmap='nipy_spectral',
+                    width=400, plotmask=True):
+        '''Shows the surface brightness map of the image centered in the
+        object of interest. 
+        '''
+        if not hasattr(self.data,'mask'): plotmask = False
+      
+        ax = show(self.data-self.bkg, ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, plotmask=plotmask,
+                  zp=self.zp, pixel_scale=self.pixel_scale)
 
-        ax.set_xlim([self.pix[0]-width,self.pix[0]+width])
-        ax.set_ylim([self.pix[1]-width,self.pix[1]+width])
+        ax.set_xlim([self.x-width,self.x+width])
+        ax.set_ylim([self.y-width,self.y+width])
         ax.text(0.02, 1, self.name, horizontalalignment='left',
                 verticalalignment='bottom', transform=ax.transAxes, fontweight='bold',fontsize='large')
         plt.tight_layout()
         return ax
     
-    def get_background(self, out=None):
-        self.bkg, self.bkgstd, self.bkg_radius = background_estimation(self.data, self.pix, self.pa, self.eps, out=out)
+    def get_background(self, growth_rate=1.05, out=None):
+        '''
+        Calculates the local background value around object using method
+        implemented in AstroPipe.profile.background_estimation
+        '''
+        self.bkg, self.bkgstd, self.bkgrad = background_estimation(self.data, self.pix, self.pa, self.eps, 
+                                                                        out=out, growth_rate=growth_rate)
         
     def get_morphology(self, nsigma=1):
+        '''Calculates the morphological parameters of the object
+        using a binarize image up to nsigma times the background. '''
+
         binary = binarize(self.data, nsigma=nsigma)
         self.pa,self.reff,self.eps = morphologhy(binary)
         self.pix = find_center(self.data, self.pix, )
@@ -160,15 +301,16 @@ class Image:
         else:
             self.data = data
 
-    def set_morphology(self,pa=None,eps=None,reff=None):
+    def set_morphology(self, pa=None, eps=None,reff=None):
         if pa: self.pa = pa
         if eps: self.eps = eps
         if reff: self.reff = reff
 
-    def set_background(self,bkg):
-        self.bkg = bkg
-        self.header['BKG'] = self.bkg
-    
+    def set_background(self, bkg=None, bkgstd=None, bkgrad=None):
+        if bkg: self.bkg = bkg
+        if bkgstd: self.bkgstd = bkgstd
+        if bkgrad: self.bkgrad = bkgrad
+
     def set_catalog(self, table):
         self.catalog = table
     
@@ -190,7 +332,6 @@ class Image:
         return 10**((self.zp-mu)/2.5)*self.pixel_scale**2
 
 
-
 class SExtractor:
     
     '''
@@ -209,9 +350,9 @@ class SExtractor:
     def __init__(self, params=None, config=None):
 
         self.files_default = {
-            "FILTER_NAME": "/Users/pmsa/Documents/PhD/Projects/SExtractor/Param/default.conv",
-            "PSF_NAME": "/Users/pmsa/Documents/PhD/Projects/SExtractor/Param/default.psf",
-            "STARNNW_NAME": "/Users/pmsa/Documents/PhD/Projects/SExtractor/Param/default.nnw",
+            "FILTER_NAME": "/Users/pmsa/scripts/SExtractor/default.conv",
+            "PSF_NAME": "/Users/pmsa/scripts/SExtractor/default.psf",
+            "STARNNW_NAME": "/Users/pmsa/scripts/SExtractor/default.nnw",
             'PHOT_FLUXFRAC': 0.9,
         }
 
@@ -256,10 +397,10 @@ class SExtractor:
         if isinstance(file, str):
             self.file = file
         else:
-            self.file = os.path.join(self.wordir,'sextractor_image.fits')
+            self.file = join(self.wordir,'sextractor_image.fits')
             fits.PrimaryHDU(file).writeto(self.file,overwrite=True)
 
-        if 'CHECKIMAGE_NAME' not in self.config: self.config['CHECKIMAGE_NAME'] = os.path.join(self.wordir,'sex.fits')
+        if 'CHECKIMAGE_NAME' not in self.config: self.config['CHECKIMAGE_NAME'] = join(self.wordir,'sex.fits')
         self.out = sew(self.file)
         self.catalog = self.out['table']
         self.seg_file = self.config['CHECKIMAGE_NAME']
@@ -366,7 +507,7 @@ class AstroGNU():
             self.file = data
             self.temp = False
         else:
-            self.file = os.path.join(dir,'_temp.fits')
+            self.file = join(dir,'_temp.fits')
             new_hdu = fits.PrimaryHDU(data)
             new_hdu.writeto(self.file,overwrite=True)
             hdu=0
@@ -382,11 +523,11 @@ class AstroGNU():
 
     def noisechisel(self,config='', keep=False):
         
-        self.nc_file  = os.path.join(self.directory,self.name+'_nc.fits')
+        self.nc_file  = join(self.directory,self.name+'_nc.fits')
         
         self.nc_config = config
         self.nc_cmd = f'astnoisechisel {self.file} -h{self.hdu} {self.nc_config} -o{self.nc_file} -q'
-        self.nc_cmd = os.path.join(self.loc,self.nc_cmd)
+        self.nc_cmd = join(self.loc,self.nc_cmd)
 
         os.system(self.nc_cmd)
         
@@ -397,13 +538,13 @@ class AstroGNU():
         if self.temp: os.remove(self.file)
 
     def segment(self, config='', clumps=False, keep=False):
-        self.seg_file  =  os.path.join(
+        self.seg_file  =  join(
                             self.directory, 
                             self.name+'_seg.fits')
 
         self.seg_config = config
         self.seg_cmd = f'astsegment {self.nc_file} {self.seg_config} -o{self.seg_file} -q'
-        self.seg_cmd = os.path.join(self.loc,self.seg_cmd)
+        self.seg_cmd = join(self.loc,self.seg_cmd)
         os.system(self.seg_cmd)
 
         self.objects = fits.getdata(self.seg_file,'OBJECTS')
@@ -414,11 +555,11 @@ class AstroGNU():
 
 
     def make_catalog(self,config='',params='',fracmax=0.05,zp=22.5):
-        self.cat_file = os.path.join(self.directory,self.name+'_nc.fits')
+        self.cat_file = join(self.directory,self.name+'_nc.fits')
         self.mkc_config = config
         self.mkc_cmd = f'astmkcatalog -irdmGnABp --fwhm --fracmaxradius1 --fracmax={fracmax} '
         self.mkc_cmd += f' {self.mkc_config} --zeropoint={zp} {self.seg_file} -o{self.cat_file} -q'
-        self.mkc_cmd = os.path.join(self.loc,self.mkc_cmd)
+        self.mkc_cmd = join(self.loc,self.mkc_cmd)
         
         os.system(self.mkc_cmd)
                 
@@ -433,14 +574,21 @@ class AstroGNU():
 
 
 class Directories():
+    '''Class to help keep track where all the products of the pipeline 
+     is being save. It generates automatic names for mask, and profiles
+    '''
     def __init__(self, name, path=None):
+        '''Once initialize it creates the structures of directories where 
+         the products will be save.'''
         if not path: path = os.path.dirname(name)
-        self.out = os.path.join(path,'AstroPipe_'+name)
+        self.out = join(path,'AstroPipe_'+name)
         if not os.path.exists(self.out):
              os.mkdir(self.out)
-        self.temp = os.path.join(self.out,'temp_'+name)
+        self.temp = join(self.out,'temp_'+name)
         if not os.path.exists(self.temp):
              os.mkdir(self.temp)
+        self.mask = join(self.out, f'{name}_mask.fits')
+        self.profile = join(self.out, f'{name}_profile.fits')
     def set_regions(self,path):
         self.regions = path
     def set_mask(self,file):
@@ -471,16 +619,6 @@ class log_class:
         f = open(self.name, "a+")
         f.write(75 * "-" + "\n")
         f.close()
-
-
-
-class SourceExtractor():
-
-    def __init__(self, file, hdu=0, config=None):
-        self.file = file
-        self.hdu = hdu
-
-
 
 
 source_extractor_keys = {

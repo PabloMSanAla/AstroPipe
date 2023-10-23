@@ -191,7 +191,7 @@ def sdss_mosaic_list(row, size=0.3, scale=0.396, band='i', verbose=False):
 
     return sdss_mosaic(ra, dec, name, outdir, size=size, scale=scale, band=band, verbose=verbose)
 
-def s4g_images(name,channel=1,mask=False, outdir='',verbose=False):
+def s4g_images(name, channel=1, mask=False, sigma=False, outdir='',verbose=False):
     """
     Download the S4G images from the IRSA server.
 
@@ -203,6 +203,8 @@ def s4g_images(name,channel=1,mask=False, outdir='',verbose=False):
             Channel of the image [1->3.6, 2->4.5]. The default is 1.
         mask : bool, optional
             If True, the function will download the mask. The default is False.
+        sigma : bool, optional
+            If True, the function will download the sigma image. The default is False.
         outdir : str, optional
             Directory where the images will be saved. The default is ''.
         verbose : bool, optional
@@ -213,37 +215,50 @@ def s4g_images(name,channel=1,mask=False, outdir='',verbose=False):
         bool
             True if the images were downloaded successfully.
     """
+    sucess = True
+    
     url = f'https://irsa.ipac.caltech.edu/data/SPITZER/S4G/galaxies/{name}/P1/{name}.phot.{channel}.fits'
     if verbose: print(url)
-
     filename = wget.download(url,out=outdir)
+    sucess *= os.path.isfile(filename)
     if verbose: print(filename)
 
     if mask:
         url = f'https://irsa.ipac.caltech.edu/data/SPITZER/S4G/galaxies/{name}/P2/{name}.{channel}.final_mask.fits'
         if verbose: print(url)
-
         filename = wget.download(url,out=outdir)
+        sucess *= os.path.isfile(filename)
         if verbose: print(filename)
 
-    return type(filename)==str
+    if sigma:
+        url = f'https://irsa.ipac.caltech.edu/data/SPITZER/S4G/galaxies/{name}/P4/{name}_sigma2014.fits.gz'
+        if verbose: print(url)
+        filename = wget.download(url, out=outdir)
+        sucess *= os.path.isfile(filename)
+        if verbose: print(filename)
 
-def des_mosaic(ra,dec,outdir='',width=0.3,scale=0.27,verbose=False):
+    return sucess
+
+def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='ls-dr10', verbose=False):
     '''
     Downloads cutotus from the Legacy Survey Server.
 
     Parameters
     ----------
         ra : float
-            Right ascension of the center of the mosaic.
+            Right ascension of the center of the mosaic. [degress]
         dec : float
-            Declination of the center of the mosaic.
+            Declination of the center of the mosaic. [degress]
         outdir : str, optional
-            Directory where the mosaic will be saved. The default is ''.
+            Directory where the mosaic will be saved. The default is '.'.
         width : float, optional
             Size of the mosaic in degrees. The default is 0.3.
         scale : float, optional
             Pixel scale of the mosaic in arcseconds. The default is 0.27.
+        bands : str, optional
+            Filters to be downloaded. Default is griz.
+        layer : str, optional 
+            Data release to use. Default is DR10 - December 2022.
         verbose : bool, optional
             If True, the function will print the URL of the script. The default is False.
     
@@ -253,7 +268,8 @@ def des_mosaic(ra,dec,outdir='',width=0.3,scale=0.27,verbose=False):
             True if the mosaic was downloaded successfully.
     '''
 
-    url = f'https://www.legacysurvey.org/viewer/cutout.fits?ra={ra}&dec={dec}&layer=ls-dr9&pixscale={scale}&size={round(width*3600/scale)}'
+    url = f'https://www.legacysurvey.org/viewer/fits-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&bands={bands}&size={round(width*3600/scale)}'
+    # url = f'https://www.legacysurvey.org/viewer/cutout.fits?ra={ra}&dec={dec}&layer=ls-dr9&pixscale={scale}&size={round(width*3600/scale)}'
     if verbose: print(url)
 
     filename = wget.download(url, out=outdir)
