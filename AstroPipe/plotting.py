@@ -9,6 +9,14 @@ import matplotlib.patches as patches
 from astropy.table import Table
 from astropy.stats import sigma_clipped_stats
 
+from screeninfo import get_monitors
+from matplotlib.widgets import RadioButtons,TextBox, Button
+from matplotlib.backend_bases import MouseButton
+from photutils.aperture import CircularAperture
+from os.path import join
+import cv2
+from astropy.io import fits
+
 matplotlib.rcParams['figure.figsize'] = (10,7)
 matplotlib.rcParams['xtick.labelsize'] = 16
 matplotlib.rcParams['ytick.labelsize'] = 16
@@ -437,4 +445,105 @@ def make_cmap(max_label, background_color='#000000ff', seed=None):
         cmap.colors[0] = colors.to_rgba(background_color)
 
     return cmap
+
+
+def mags(data, zp, scale):
+        return zp + 5*np.log10(scale) - 2.5*np.log10(data)
+
+
+def interactive_mask_modify(Image, out=None, scaling = 0.8, screendpi = 100, **kwargs):
+
+    scaling = 0.8
+    for m in get_monitors():
+        if m.is_primary:
+            figsize = np.nanmin([m.width,m.height])*scaling
+            break
+    screendpi = 100
+
+    galaxy = Image.name
+
+    specs = {'vmin' : 19, 'vmax':26.5, 'cmap': 'nipy_spectral',
+            'origin':'lower', 'interpolation':'none'}
+    
+    for key in kwargs: specs[key] = kwargs[key]
+
+    # Global variables, not sure if needed
+    global original_labels, new_labels
+    global size, historylabels, historyapers, newmaskname
+
+    # Create figure and axes
+    fig = plt.figure(figsize=(figsize/screendpi,figsize/screendpi))
+    ax = fig.add_axes([0.05,0.05,0.75,0.85])
+    ax_radio = fig.add_axes([0.81, 0.3, 0.15, 0.15])
+    size_ax = fig.add_axes([0.81, 0.25, 0.15, 0.05])
+    save_ax = fig.add_axes([0.81, 0.15, 0.15, 0.05])
+
+
+    # Plot image and mask
+    im = ax.imshow(mags(Image.data.data, Image.zp, Image.pixel_scale), **specs)
+    fig.colorbar(im, ax=ax, shrink=0.8, location='top')
+    immask = ax.imshow(Image.data.mask, origin='lower', cmap=mask_cmap(alpha=0.5))
+
+    # Widgets
+    radio_butons = RadioButtons(ax_radio, ('delete', 'create'), active=0)
+    size = 5
+    size_box = TextBox(size_ax, 'size', initial=str(size))
+
+    newmaskname = f'{galaxy}_newmask.fits'
+    save_button = Button(save_ax, 'Save')
+
+    new_mask = np.zeros_like(Image.data.mask)
+    new_mask[Image.data.mask != 0] = 1
+
+    original_labels = cv2.connectedComponentsWithStats(new_mask.astype(np.uint8), 8, cv2.CV_32S)[1]
+    new_labels = original_labels.copy()
+    historylabels = [0]*100
+    historyapers = []
+
+    def update_size(text):
+        global size
+        size = float(text)
+
+    
+    def save_newmask(hello):
+        fits.PrimaryHDU(new_labels.astype(np.int32),
+                        Image.header).writeto(
+                        newmaskname, overwrite=True)
+        print('New mask saved as {}'.format(newmaskname))
+
+
+    def on_click(event):
+        global historylabels 
+        if event.inaxes!=ax_radio:
+            if radio_butons.value_selected == 'delete':
+                if event.button is MouseButton.LEFT:
+                    x = np.int32(event.xdata)
+                    y = np.int32(event.ydata)
+                    label = original_labels[y,x]
+                    if label != 0: historylabels.append(label)
+                    new_labels[new_labels == historylabels[-1]] = 0
+                elif event.button is MouseButton.MIDDLE:
+                    new_labels[original_labels == historylabels[-1]] = historylabels[-1]
+                    del historylabels[-1]
+            elif radio_butons.value_selected == 'create':    
+                if event.button is MouseButton.LEFT:
+                    x = event.xdata
+                    y = event.ydata 
+                    historyapers.append(CircularAperture([x, y], size))
+                    aper_mask = historyapers[-1].to_mask(method='center').to_image(Image.data.shape)
+                    label = np.nanmax(new_labels) + 1
+                    new_labels[aper_mask != 0] = label
+                    original_labels[(aper_mask != 0) * (original_labels==0)] =label
+                    historylabels.append(label)
+                elif event.button is MouseButton.MIDDLE:
+                    new_labels[original_labels == historylabels[-1]] = 0
+                    del historylabels[-1]
+        immask.set_data(new_labels)
+        plt.draw()
+
+    plt.connect('button_press_event', on_click)
+    size_box.on_submit(update_size)
+    save_button.on_clicked(save_newmask)
+
+    plt.show()
 

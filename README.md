@@ -5,9 +5,9 @@
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![GNU License][license-shield]][license-url]
-[![LinkedIn][linkedin-shield]][linkedin-url]
 
-<!-- PROJECT LOGO
+<!-- [![LinkedIn][linkedin-shield]][linkedin-url]
+PROJECT LOGO
 <br />
 <div align="center">
   <a href="https://github.com/PabloMSanAla/fabada">
@@ -18,7 +18,9 @@
 <h3 align="center">Pipeline mainly focus on data analysis of Astronomical images.</h3>
 
   <p align="center">
-    AstroPipe is a pipeline aim to produce reliable surface brightness profiles of galaxies. It has built-in functions to reduce, analyse and visualize astronomical images in general. It is meant to help me analyse all the data for my PhD and being able to share it with other collegues. 
+    AstroPipe is a pipeline aim to produce reliable surface brightness profiles of galaxies. It has built-in functions to reduce, analyse and visualize astronomical images in general. It is meant to help me analyse all the data for my PhD and being able to share it with other colleagues. 
+    <br />
+    This is a work in progress, use at your own risk!
     <br />
     <a href="https://colab.research.google.com/github/PabloMSanAla/AstroPipe"><strong>Explore the docs »</strong></a>
     <br />
@@ -36,7 +38,7 @@
   <summary>Table of Contents</summary>
   <ol>
     <li>
-      <a href="#about-the-project">About The Method</a>
+      <a href="#about-the-project">About The Library</a>
     </li>
     <li>
       <a href="#getting-started">Getting Started</a>
@@ -57,11 +59,11 @@
 
 <!-- ABOUT THE PROJECT -->
 
-## About The Method
+## About The Library
 
 <!-- [![Product Name Screen Shot][product-screenshot]](https://example.com) -->
 
-All this code is the result of my Ph.D. The aim of this "library" is to help process and analyse astronomical images. More specifically, to obtain reliable surface brightness profiles it can also offer more features to reduce, smooth, fit, and visualize images. It is written in Python and mostly uses common libraries (see requirements). 
+All this code is the result of my Ph.D. The aim of this "library" is to help process and analyses astronomical images. More specifically, to obtain reliable surface brightness profiles it can also offer more features to reduce, smooth, fit, and visualize images. It is written in Python and mostly uses common libraries (see requirements). 
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -144,7 +146,7 @@ Distributed under the GNU General Public License. See [`LICENSE.txt`](https://gi
 
 ## Contact
 
-Pablo M Sánchez Alarcón - pmsa.astro@gmail.com
+Pablo M Sánchez-Alarcón - pmsa.astro@gmail.com
 
 Project Link: [https://github.com/PabloMSanAla/AstroPipe](https://github.com/PabloMSanAla/AstroPipe)
 
@@ -174,15 +176,16 @@ Readme file taken from [Best README Template](https://github.com/othneildrew/Bes
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 
 [contributors-shield]: https://img.shields.io/github/contributors/PabloMSanAla/fabada.svg?style=plastic&logo=appveyor
-[contributors-url]: https://github.com/PabloMSanAla/fabada/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/PabloMSanAla/fabada.svg?style=plastic&logo=appveyor
-[forks-url]: https://github.com/PabloMSanAla/fabada/network/members
-[stars-shield]: https://img.shields.io/github/stars/PabloMSanAla/fabada.svg?style=plastic&logo=appveyor
-[stars-url]: https://github.com/PabloMSanAla/fabada/stargazers
-[issues-shield]: https://img.shields.io/github/issues/PabloMSanAla/fabada.svg?style=plastic&logo=appveyor
-[issues-url]: https://github.com/PabloMSanAla/fabada/issues
-[license-shield]: https://img.shields.io/github/license/PabloMSanAla/fabada.svg?style=plastic&logo=appveyor
-[license-url]: https://github.com/PabloMSanAla/fabada/blob/master/LICENSE.txt
+[contributors-url]: https://github.com/PabloMSanAla/AstroPipe/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/PabloMSanAla/AstroPipe.svg?style=plastic&logo=appveyor
+[forks-url]: https://github.com/PabloMSanAla/AstroPipe/network/members
+[stars-shield]: https://img.shields.io/github/stars/PabloMSanAla/AstroPipe.svg?style=plastic&logo=appveyor
+[stars-url]: https://github.com/PabloMSanAla/AstroPipe/stargazers
+[issues-shield]: https://img.shields.io/github/issues/PabloMSanAla/AstroPipe.svg?style=plastic&logo=appveyor
+[issues-url]: https://github.com/PabloMSanAla/AstroPipe/issues
+[license-shield]: https://img.shields.io/github/license/PabloMSanAla/AstroPipe.svg?style=plastic&logo=appveyor
+[license-url]: https://github.com/PabloMSanAla/AstroPipe/blob/master/LICENSE.txt
+
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=plastic&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/linkedin_username
 [image_results]: src/images/bubble_fabada_24.63dB.jpg

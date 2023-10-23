@@ -908,8 +908,8 @@ Background = {localsky:.3e} +- {localsky_std:.3e}
             ha='left', va='top', transform=axtext.transAxes, fontsize=10)
         rect.plot(axes=ax4,color='black')
         fig.subplots_adjust(hspace=0.4)
-        ax4.text(0.02, 1.05, os.path.basename(os.path.splitext(out)[0]), horizontalalignment='left',
-                verticalalignment='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
+        # ax4.text(0.02, 1.05, os.path.basename(os.path.splitext(out)[0]), ha='left',
+        #         va='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
         fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
 
     return localsky, localsky_std, float(np.nanmax([rad[-1],maxr]))

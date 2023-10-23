@@ -211,9 +211,9 @@ class Image:
             profile : AstroPipe.profile.Profile
                 Radial profile of the object.'''
 
-        max_r = 2*self.bkg_radius if max_r is None else max_r
+        max_r = 2*self.bkgrad if max_r is None else max_r
     
-        profile = elliptical_radial_profile(self.data, self.pix, self.pa, self.eps, max_r,
+        profile = elliptical_radial_profile(self.data, max_r, self.pix, self.pa, self.eps,
                                          growth_rate=growth_rate, plot=plot, save=save)
         
         profile.set_params(bkg=self.bkg, bkgstd=self.bkgstd, 
