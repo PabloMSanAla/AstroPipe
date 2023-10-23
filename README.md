@@ -118,8 +118,8 @@ Work in progress...
 
 I created different jupyter notebooks to help you use the pipeline and get the sense of the methods built-in.
 
-- [Cavity](https://github.com/PabloMSanAla/AstroPipe/demos/cavity.ipynb): Jupyter Notebook to create masks, profiles and visualize galaxies from a [CAVITY](https://www.ugr.es/~isa/) field.
-
+- [Cavity](https://github.com/PabloMSanAla/AstroPipe/blob/main/demos/cavity.ipynb): Jupyter Notebook to create masks, profiles and visualize galaxies from a [CAVITY](https://www.ugr.es/~isa/) field.
+  
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
