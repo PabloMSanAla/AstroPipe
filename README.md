@@ -190,8 +190,7 @@ Readme file taken from [Best README Template](https://github.com/othneildrew/Bes
 [issues-shield]: https://img.shields.io/github/issues/PabloMSanAla/AstroPipe.svg?style=plastic&logo=appveyor
 [issues-url]: https://github.com/PabloMSanAla/AstroPipe/issues
 [license-shield]: https://img.shields.io/github/license/PabloMSanAla/AstroPipe.svg?style=plastic&logo=appveyor
-[license-url]: https://github.com/PabloMSanAla/AstroPipe/blob/master/LICENSE.txt
-
+[license-url]: https://github.com/PabloMSanAla/AstroPipe/blob/master/LICENSE
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=plastic&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/linkedin_username
 [image_results]: src/images/bubble_fabada_24.63dB.jpg
