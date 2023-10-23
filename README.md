@@ -63,7 +63,7 @@ PROJECT LOGO
 
 <!-- [![Product Name Screen Shot][product-screenshot]](https://example.com) -->
 
-All this code is the result of my Ph.D. The aim of this "library" is to help process and analyses astronomical images. More specifically, to obtain reliable surface brightness profiles it can also offer more features to reduce, smooth, fit, and visualize images. It is written in Python and mostly uses common libraries (see requirements). 
+All this code is the result of my Ph.D. The aim of this "library" is to help analyse astronomical images. More specifically, to obtain reliable surface brightness profiles. It can also offer more features to reduce, smooth, fit, and visualize images. It is written in Python and mostly uses common libraries (see the [prerequisites](https://github.com/PabloMSanAla/AstroPipe#prerequisites)). 
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
