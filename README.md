@@ -22,10 +22,10 @@ PROJECT LOGO
     <br />
     This is a work in progress, use at your own risk!
     <br />
-    <a href="https://colab.research.google.com/github/PabloMSanAla/AstroPipe"><strong>Explore the docs »</strong></a>
+    <a href="https://github.com/PabloMSanAla/AstroPipe#documents"><strong>Explore the docs »</strong></a>
     <br />
     <br />
-    <a href="https://github.com/PabloMSanAla/AstroPipe#usage">View Demo</a>
+    <a href="https://github.com/PabloMSanAla/AstroPipe#demos">View Demo</a>
     ·
     <a href="https://github.com/PabloMSanAla/AstroPipe/issues">Report Bug</a>
     ·
@@ -84,6 +84,9 @@ To use the masking module you need to have different external software for Astro
 
 and the aliases need to be stored in your environment variable so you can call the different software. In particular, for Gnuastro, it uses NoiseChisel. This needs to be installed if you want to create masks. However there are different methods that use different software, so it's not mandatory to have all installed but at least, one of them. 
 
+#### Python libraries
+The library is written in Python and uses different libraries. Most of them can be installed using pip. You can find the main requisites in the [*requirements.txt*](https://github.com/PabloMSanAla/AstroPipe/blob/main/requirements.txt). Furthermore, you will need to install the [sewpy](https://github.com/megalut/sewpy) library apart from the ones install automatically with the requirements.txt file.
+
 
 ### Installation
 
@@ -94,6 +97,8 @@ You can install the library using pip as follows:
   cd AstroPipe
   pip install -e .
 ```
+
+I strongly recommend to install it in a separate virtual environment.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 

@@ -16,7 +16,6 @@ from matplotlib.colors import LogNorm
 import matplotlib
 import os
 from os.path import join
-import subprocess
 
 from lmfit.models import GaussianModel
 
