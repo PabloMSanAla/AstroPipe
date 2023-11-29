@@ -85,7 +85,7 @@ To use the masking module you need to have different external software for Astro
 and the aliases need to be stored in your environment variable so you can call the different software. In particular, for Gnuastro, it uses NoiseChisel. This needs to be installed if you want to create masks. However there are different methods that use different software, so it's not mandatory to have all installed but at least, one of them. 
 
 #### Python libraries
-The library is written in Python and uses different libraries. Most of them can be installed using pip. You can find the main requisites in the [*requirements.txt*](https://github.com/PabloMSanAla/AstroPipe/blob/main/requirements.txt). Furthermore, you will need to install the [sewpy](https://github.com/megalut/sewpy) library apart from the ones install automatically with the requirements.txt file.
+The library is written in Python and uses different libraries. Most of them can be installed using pip. You can find the main requisites in the [*requirements.txt*](https://github.com/PabloMSanAla/AstroPipe/blob/main/requirements.txt). Furthermore, you must install the [sewpy](https://github.com/megalut/sewpy) library apart from the ones installed automatically with the requirements.txt file.
 
 
 ### Installation
@@ -93,13 +93,13 @@ The library is written in Python and uses different libraries. Most of them can 
 You can install the library using pip as follows:
 
 ```sh
-  git clone git@github.com:PabloMSanAla/AstroPipe.git
+  git clone [git@github.com:PabloMSanAla/AstroPipe.git](https://github.com/PabloMSanAla/AstroPipe.git)
   cd AstroPipe
   pip install -e .
 ```
 
 
-I strongly recommend to install it in a separate virtual environment.
+I strongly recommend to install it in a separate virtual environment. You could also add this to your Python path in this repository and you would not depend on pip. 
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -116,7 +116,7 @@ Work in progress...
 
 ## Demos
 
-I created different jupyter notebooks to help you use the pipeline and get the sense of the methods built-in.
+I created different Jupyter notebooks to help you use the pipeline and get a sense of the methods built-in.
 
 - [Cavity](https://github.com/PabloMSanAla/AstroPipe/blob/main/demos/cavity.ipynb): Jupyter Notebook to create masks, profiles and visualize galaxies from a [CAVITY](https://www.ugr.es/~isa/) field.
   
@@ -127,7 +127,7 @@ I created different jupyter notebooks to help you use the pipeline and get the s
 
 ## Contributing
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+Contributions are what makes the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
 If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
 Don't forget to give the project a star! Thanks again!
