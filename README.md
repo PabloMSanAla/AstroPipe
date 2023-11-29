@@ -93,7 +93,7 @@ The library is written in Python and uses different libraries. Most of them can 
 You can install the library using pip as follows:
 
 ```sh
-  git clone [git@github.com:PabloMSanAla/AstroPipe.git](https://github.com/PabloMSanAla/AstroPipe.git)
+  git clone https://github.com/PabloMSanAla/AstroPipe.git
   cd AstroPipe
   pip install -e .
 ```
