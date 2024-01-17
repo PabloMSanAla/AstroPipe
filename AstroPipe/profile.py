@@ -24,6 +24,8 @@ from matplotlib.colors import LogNorm
 from scipy import stats
 from scipy.ndimage import median_filter
 from scipy.signal import medfilt, argrelextrema
+from scipy.interpolate import interp1d
+
 
 
 from lmfit.models import GaussianModel
@@ -90,7 +92,10 @@ class Profile:
 
             self.int = np.zeros_like(self.rad)
             self.intstd = np.zeros_like(self.rad)
-            
+            self.flux = np.zeros_like(self.rad)
+            self.fluxstd = np.zeros_like(self.rad)
+            self.npixels = np.zeros_like(self.rad)
+        
         self.bkg = 0 
         self.bkgstd = 0 
         self.zp = 0 
@@ -116,7 +121,8 @@ class Profile:
     
     def set_params(self, 
             radii=None, intensity=None, instensity_err=None, 
-            pa=None, eps=None, center=None,
+            flux=None, fluxstd=None, npixels=None,
+            pa=None, pastd=None, eps=None, epsstd=None, center=None, 
             bkg=None, bkgstd=None, zp=None, pixscale=None):
 
         
@@ -133,23 +139,30 @@ class Profile:
         if instensity_err is not None: self.intstd = instensity_err
         
         if pa is not None: self.pa = pa*conversion
+        if pastd is not None: self.pastd = pastd*conversion
         if eps is not None: self.eps = eps*conversion
+        if epsstd is not None: self.epsstd = epsstd*conversion
         if center is not None and np.array(center).size==2: 
             self.x = center[0]*conversion
             self.y = center[1]*conversion
         elif center is not None: self.x, self.y = center
         
+        if flux is not None: self.flux = flux
+        if fluxstd is not None: self.fluxstd = fluxstd
+        if npixels is not None: self.npixels = npixels
 
         if bkg is not None: self.bkg = bkg
         if bkgstd is not None: self.bkgstd = bkgstd 
         if zp is not None: self.zp = zp
         if pixscale is not None: self.pixscale = pixscale
 
-        self.columns = ['radius', 'intensity', 'intensity_err', 'pa', 'eps', 'x', 'y']
-        self.units = ['arcsec', 'counts', 'counts', 'deg', 'na', 'pixel','pixel']
+        self.columns = ['radius', 'intensity', 'intensity_err', 'flux','flux_err',
+                        'npixels','pa', 'pa_err', 'eps', 'eps_err', 'x', 'y']
+        self.units = ['arcsec', 'counts', 'counts','counts', 'counts','na', 
+                      'deg', 'deg', 'na', 'na', 'pixel', 'pixel']
         self.meta = {'zp':zp, 'pixscale':pixscale, 'bkg':bkg , 'bkgstd':bkgstd}
 
-        if zp is not None and pixscale is not None and hasattr(self, 'int'):
+        if zp is not None and pixscale is not None and any(self.int>0):
             self.brightness()
         
     
@@ -204,16 +217,252 @@ class Profile:
         self.brightness()
     
     def remove_nans(self):
-        index = np.isnan(self.int) + np.isnan(self.rad)
+        if not hasattr(self, 'mu'): self.brightness()
+        index = np.isnan(self.int) + np.isnan(self.rad) + np.isnan(self.mu)
         self.rad = self.rad[~index]
         self.int = self.int[~index]
         self.intstd = self.intstd[~index]
+        self.flux = self.flux[~index]
+        self.fluxstd = self.fluxstd[~index]
+        self.npixels = self.npixels[~index]
         self.pa = self.pa[~index]
         self.eps = self.eps[~index]
         self.x = self.x[~index]
         self.y = self.y[~index]
         self.brightness()
+    
+    def interpolateCurve(self, var1, var2, nElements=10000, kind='linear'):
+        '''
+        Enhances resolution of the curve of growth via interpolation.
 
+        Parameters
+        ----------
+        nElements : int
+            Number of resolution elements for interpolated curve
+        kind : string
+            Interpolation type.  Valid values are: ‘linear’, ‘nearest’,
+            ‘nearest-up’, ‘zero’, ‘slinear’, ‘quadratic’, ‘cubic’, ‘previous’,
+            or ‘next’.
+
+        Returns
+        -------
+        high_res_var1 : numpy.ndarray
+            Variable 1 with resolution defined by nElements
+        high_res_var2 : numpy.ndarray
+            Variable 2 with resolution defined by nElements
+        '''
+        f = interp1d(var1, var2, kind=kind)
+        high_res_var1 = np.linspace(np.min(var1), np.max(var1), nElements)
+        high_res_var2 = f(high_res_var1)
+
+        return high_res_var1, high_res_var2
+
+    def curveOfGrowth(self, sky=None):
+        '''
+        Produces a curve of growth in magnitudes
+
+        Parameters
+        ----------
+        sky : float, optional
+            Estimate of the average sky flux local to the galaxy.
+            The default is 0.
+
+        Returns
+        -------
+        sma : numpy.ndarray
+            Semi-major-axis array, in pixels
+        mags : numpy.ndarray
+            Total magnitude enclosed within sma
+        '''
+        if sky is None: sky = self.bkg
+
+        sma = self.rad
+        tflux = self.flux - self.npixels*sky
+        mags = -2.5*np.log10(tflux) + self.zp
+
+        return sma, mags
+
+    def totalMagnitude(self, sma, mags, npoints=10):
+        '''
+        Computes total magnitude of galaxy using curve of growth
+
+        Parameters
+        ----------
+        sma : numpy.ndarray
+            Semi-major-axis array, in pixels
+        mags : numpy.ndarray
+            Total magnitude enclosed within sma
+        npoints : int, optional
+            Number of points to use for fitting. The default is 10.
+
+        Returns
+        -------
+        totalMag : float
+            Total magnitude extrapolated to infinity
+
+        NOTE: fitting limits currently hard-coded, but proven effective for
+        exponential profiles
+        '''
+        slope = ut.localSlope(sma, mags)
+        # want = (slope >= -0.008) & (slope <= 0)  # Typical useful range
+        want = (sma>sma[-npoints])
+        fit = np.polyfit(slope[want], mags[want], 1)
+        totalMag = fit[1]
+
+        return totalMag
+
+    def fractionalRadius(self, totalMag, fluxFrac=0.5):
+        '''
+        Computes the radius containing some fraction of the galaxy's total
+        light.
+
+        Parameters
+        ----------
+        totalMag : float
+            Galaxy total magnitude
+        fluxFrac : float, optional
+            The desired fraction of enclosed light. The default is 0.5, i.e.
+            by defaul this returns the half-light radius.
+
+        Returns
+        -------
+        fracRad : float
+            The radius containing the desired fraction of the galaxy's total
+            light, in pixels
+        '''
+        totalFlux = 10**(-0.4*(totalMag - self.zp))
+        findFlux = totalFlux * fluxFrac
+
+        # A little crude, but we interpolate to improve the radius resolution
+        sma, cog = self.interpolateCurve(self.rad,
+                                         self.flux-self.npixels*self.bkg)
+
+        idx = ut.closest(cog, findFlux)
+        fracRad = sma[idx]
+
+        return fracRad
+
+    def concentration(self, totalMag, f1 = 0.8, f2=0.2):
+        '''
+        Derives the concentration parameter C discussed by Conselice (2003)
+        between fraction f1 and f2. Default values are the concentration index
+        originally proposed by Kent (1985), ApJS, 59, 115. [C82]
+
+        Parameters
+        ----------
+        totalMag : float
+            Galaxy total magnitude
+        f1 : float, optional
+            Outer fraction level. The default is 0.8. [0-1]
+        f2 : float, optional
+            Inner fraction level. The default is 0.2. [0-1]
+
+        Returns
+        -------
+        c82 : float
+            The concentration parameter C = 5log(R_f1/R_f2)
+        '''
+        r1 = self.fractionalRadius(totalMag, f1)
+        r2 = self.fractionalRadius(totalMag, f2)
+        c = 5*np.log10(r1/r2)
+        return c
+
+    def isophotalRadius(self, SbMu, sky=None, returnMorph=False):
+        '''
+        Get radius at a level of surface brightness
+
+        Parameters
+        ----------
+            SbMu : float
+                Surface brightness level
+        Returns
+        -------
+            rad : float
+                Radius at the given surface brightness level [arcseconds]
+        '''
+
+        if not hasattr(self, 'mu') and not sky: 
+            self.brightness()
+    
+        if sky: 
+            mu = self.zp - 2.5*np.log10(self.int - sky) + 5*np.log10(self.pixscale)
+        else: mu = np.zeros_like(self.mu) + self.mu
+
+        sma, sb = self.interpolateCurve(self.rad,
+                                        mu)
+        if returnMorph: 
+            _, pa = self.interpolateCurve(self.rad, self.pa)
+            _, eps = self.interpolateCurve(self.rad, self.eps)
+    
+        idx = ut.closest(sb, SbMu)
+        output = sma[idx]*self.pixscale
+        if returnMorph: output = [output, pa[idx], eps[idx]]
+
+        return output
+
+    def concentrationRe(self, totalMag, alpha=0.7):
+        '''
+        Derived the concentration parameter proposed by Trujillo et al. (2001)
+        MNRAS, 326, 869
+
+        Parameters
+        ----------
+        totalMag : float
+            Galaxy total magnitude
+        alpha : float
+            Factor by which to define outer isophote level, as alpha*rEff
+
+        Returns
+        -------
+        cRe : float
+            The concentration parameter sum(I[<alpha*Reff])/sum(I[<Reff])
+        '''
+        rEff = self.fractionalRadius(totalMag, 0.5)
+
+        sma, cog = self.interpolateCurve(self.rad,
+                                         self.flux-self.npixels*self.bkg)
+
+        idx = ut.closest(sma, rEff)
+        idy = ut.closest(sma, alpha*rEff)
+
+        sum1 = cog[idy]
+        sum2 = cog[idx]
+
+        cRe = sum1/sum2
+
+        return cRe
+
+    def petrosianRadius(self, eta=0.2, sky=0):
+        '''
+        Derives Petrosian radius (Petrosian 1976).
+
+        Parameters
+        ----------
+        eta : float, optional
+            Value of Petrosian index used to define Petrosian radius.
+            The default is 0.2 (Bershady et al. 2000)
+
+        Returns
+        -------
+        radPetro : float
+            Petrosian radius in pixels
+
+        NOTE: quick check, for an exponential profile, R_petrosian ~
+        2x R_eff.
+        '''
+        if sky==0: sky = self.bkg
+
+        sma, sb = self.interpolateCurve(self.rad,
+                                        self.int-sky)
+        __, cog = self.interpolateCurve(self.rad,
+                                        self.flux-self.npixels*sky)
+        __, area = self.interpolateCurve(self.rad,
+                                         self.npixels)
+        petrosian = sb * (area/cog)
+        idx = ut.closest(petrosian, eta)
+        radPetro = sma[idx]
+
+        return radPetro
 
     def write(self, filename=None, overwrite=True):
         self.meta = {'zp':self.zp, 'pixscale': self.pixscale, 
@@ -221,7 +470,9 @@ class Profile:
         
         if filename is None: filename = 'profile.txt'
         
-        table = Table([self.rad, self.int, self.intstd, self.pa, self.eps, self.x, self.y], 
+        table = Table([self.rad, self.int, self.intstd, 
+                       self.flux, self.fluxstd, self.npixels,
+                       self.pa, self.eps, self.x, self.y], 
                         names=self.columns,
                         units=self.units, meta=self.meta)
         table.write(filename, overwrite=overwrite)
@@ -234,7 +485,7 @@ class Profile:
                         np.array(table['pa'].value), np.array(table['eps'].value), 
                         (np.array(table['x'].value), np.array(table['y'].value)), 
                         table.meta['BKG'], table.meta['BKGSTD'], table.meta['ZP'], table.meta['PIXSCALE'])
-    
+        self.table = table
 
 def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, axes=None, color='k', label=None, **kwargs):
     '''
@@ -401,21 +652,30 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
     previous_mask = np.zeros_like(data)
 
     for i,rad in enumerate(profile.rad):
-
-        if len(ellip_apertures) > 1:
-            previous_mask = mask
-
+        
+        if i>0:
+            profile.rad[i] = (profile.rad[i-1] + profile.rad[i])/2
+        # generate astropy aperture
         ellip_apertures.append(EllipticalAperture(
             (profile.x[i],profile.y[i]), rad, 
             (1-profile.eps[i])*rad, profile.pa[i]*np.pi/180))
         
+        # create mask and index list of the aperture and updates previous one 
         mask = ellip_apertures[-1].to_mask(method='center').to_image(data.shape)
-
         index = (data.mask==False) * (mask!=0) * (previous_mask==0)
+        previous_mask = mask
+
+        # compute sigma clipped median of the aperture 
         clipped = sigma_clip(data.data[index], sigma=2.5, maxiters=3)
         profile.int[i] = np.ma.median(clipped)
         profile.intstd[i] = np.nanstd(clipped)/np.sqrt(np.size(clipped))
+        if np.isnan(profile.intstd[i]): profile.intstd[i] = profile.intstd[i-1] 
         
+        # integrated photometry 
+        profile.npixels[i] =  profile.npixels[i-1] + np.size(data.data[index])
+        profile.flux[i] =  profile.flux[i-1] + np.nansum(data.data[index])
+        profile.fluxstd[i] = np.sqrt(profile.fluxstd[i-1]**2 +  (np.sqrt(profile.npixels[i-1])*profile.intstd[i-1])**2)
+
     if plot is not None:
         fig,ax = plt.subplots(1,1,figsize=(8,8))
         show(data, ax=ax)
@@ -468,15 +728,18 @@ def isophotal_photometry(data, center, pa, eps, reff,  max_r=None, growth_rate=1
     guess_aper = EllipseGeometry(x0=center[0], y0=center[1],
                             sma=reff, eps=eps, pa=pa)
 
-
     ellipse = Ellipse(data, guess_aper)
 
     isolist = ellipse.fit_image(reff, integrmode='median',sclip=2.5, nclip=3, maxsma=max_r,
                 minsma=1,step=step,fix_center=fix_center,fix_pa=fix_pa,fix_eps=fix_eps)
+    
+    fluxstd = np.sqrt(isolist.npix_e)*isolist.int_err
 
     profile = Profile()
     profile.set_params(radii=isolist.sma, intensity=isolist.intens, instensity_err=isolist.int_err,
-        pa=isolist.pa*180/np.pi, eps=isolist.eps, center=(isolist.x0, isolist.y0))
+        flux=isolist.tflux_e, fluxstd=fluxstd, npixels=isolist.npix_e,
+        pa=isolist.pa*180/np.pi, pastd=isolist.pa_err*180/np.pi,
+        eps=isolist.eps, epsstd=isolist.eps_err, center=(isolist.x0, isolist.y0))
     
     if plot is not None:
         fig, ax = plt.subplots(1,1,figsize=(8,8))
@@ -780,7 +1043,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
 
             growth_rate = 1.01
             index = intensity < mode + std
-            dIdr = derivative(rad[index],intensity[index])
+            dIdr = ut.derivative(rad[index],intensity[index])
             signs = np.sign(dIdr[1:]/dIdr[:-1]) == -1
 
             if np.sum(signs) > 5 or (np.abs(intensity[-1]/mode - 1) < epsilon):
@@ -795,8 +1058,8 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
         rad = np.append(rad, rad[-1]*growth_rate)
 
 
-    dIdr = derivative(rad,intensity)
-    ddIdr2 = derivative(rad,dIdr)
+    dIdr = ut.derivative(rad,intensity)
+    ddIdr2 = ut.derivative(rad,dIdr)
 
     index = intensity < mode + std
     skyradius1 = asymtotic_fit_radius(rad[index],dIdr[index])
@@ -948,7 +1211,7 @@ def find_radius_asintote(x,y):
     # Returns the radius where the asintote starts
 
     # Find the slope of the line between each point
-    slope = derivative(x,y)
+    slope = ut.derivative(x,y)
 
     # Find the first point where the slope is 0
     # This is the point where the asintote starts
@@ -970,29 +1233,6 @@ def find_mode(data):
 
     return  result.values['center'], result
 
-def derivative(x,y,n=4):
-    """
-    Computes de slope from the n adjacent points using 
-    linear regression.
-    """
-    index = np.isfinite(x) & np.isfinite(y)
-    deriv = np.zeros_like(x)
-    x = np.array(x)[index]
-    y = np.array(y)[index]
-    
-    der = np.zeros_like(x)
-    for i in range(len(x)):
-        if i<n:
-            slope = stats.linregress(x[:i+n],y[:i+n])[0]
-        elif len(x)-i<n:
-            slope = stats.linregress(x[i-n:],y[i-n:])[0]
-        else:
-            slope = stats.linregress(x[i-n:i+n],y[i-n:i+n])[0]
-        der[i] = slope
-    deriv[index] = der
-    if any(~index): deriv[~index] = np.NaN
-    return deriv
-
 
 
 def aaron_break_finder(rad,mu,min=21,max=31,n=4,p=5):
@@ -1001,7 +1241,7 @@ def aaron_break_finder(rad,mu,min=21,max=31,n=4,p=5):
     seen in Watkins et al. (2019)
     """
     index = ut.where([mu>min,mu<max,np.isfinite(mu)])[0]
-    der = derivative(rad[index],mu[index],n=n)
+    der = ut.derivative(rad[index],mu[index],n=n)
     der = median_filter(der,size=int(p*len(mu)/100))
     cum_sum = np.cumsum(der-np.mean(der))
     maximum = rad[index][argrelextrema(cum_sum, np.greater)[0]]

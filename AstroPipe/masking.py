@@ -5,11 +5,10 @@ in astronomical images. It uses some of the following software:
    - NoiseChisel [Gnuastro]
    - MTObjects
 '''
-
-
-import pandas as pd
+import os
+import cv2
 import numpy as np
-from astropy.io import fits
+import pandas as pd
 from astropy.coordinates import SkyCoord
 from regions import CirclePixelRegion
 from astropy.wcs.utils import skycoord_to_pixel, pixel_to_skycoord
@@ -17,12 +16,11 @@ from astropy.wcs import WCS, utils
 import astropy.units as u
 from astropy.coordinates import Angle
 from regions.core import PixCoord
-import argparse
-import sys
-import os
+
 from scipy.ndimage import gaussian_filter
 from photutils.segmentation import detect_sources
 from fabada import fabada
+
 
 from .classes import SExtractor, AstroGNU, MTObjects
 from .utils import where, change_coordinates
@@ -32,6 +30,8 @@ from scipy.ndimage import gaussian_filter
 
 from matplotlib import pyplot as plt 
 from scipy.signal import convolve2d
+from astropy.io import fits
+
 
 point_sexcofing = {
                 "CHECKIMAGE_TYPE": "SEGMENTATION",
@@ -76,13 +76,14 @@ def gaussian1D(x, mu, sig):
     return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
 
 
-def gaussian(sigma, shape, normalize=True):
-    x, y = np.meshgrid(np.linspace(-1, 1, shape[0]), np.linspace(-1, 1, shape[1]))
-    d = np.sqrt(x*x+y*y)
-    sigma = sigma
-    g = np.exp(-( (d)**2 / ( 2.0 * sigma**2 ) ) )
-    if normalize: g /= np.sum(g)
-    return g
+def gaussian2D(l, sig):
+    """\
+    creates gaussian kernel with side length `l` and a sigma of `sig`
+    """
+    ax = np.linspace(-(l - 1) / 2., (l - 1) / 2., l)
+    gauss = np.exp(-0.5 * np.square(ax) / np.square(sig))
+    kernel = np.outer(gauss, gauss)
+    return kernel / np.sum(kernel)
 
 
 def gaussian2d(positions, center, sigma):
@@ -141,7 +142,7 @@ def increase_mask(mask, shape=(3,3)):
     return cv2.dilate(mask,np.ones(shape)/np.prod(shape), iterations=1)
 
 
-def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
+def sexmask(IMG, folders, fwhm=None, plot=False, temp=False):
     '''
     Use SExtractor to create a mask of the image
     We run FABADA to enhace the object and improve the detection.
@@ -162,6 +163,10 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
         folders : AstroPipe Directories object
             Class object containing the directories of the project
 
+        fwhm : float, optional
+            FWHM of the image in pixels. It is used to filter point sources.
+            if None, it measures it from SExtractor.
+
         plot : bool, optional
             If True, plot the mask and the image and save it in temporary directory
 
@@ -169,11 +174,16 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
     -------
         bool : True if the mask is created
     '''
+    import numpy as np
+    from astropy.io import fits
+    from matplotlib import pyplot as plt
+
 
     if not hasattr(folders,'mask'): folders.set_mask(os.path.join(folders.out,os.path.basename(IMG.name).split(IMG.extension)[0]+'_mask.fits'))
     if not hasattr(IMG,'bkg'): bkg = IMG.bkg
     else: bkg = 0
 
+    back_size = 8*fwhm**2 if fwhm else 120
 
     if not hasattr(IMG,'std'): 
         mean, bkg, IMG.std = sigma_clipped_stats(IMG.data, sigma=2.5)
@@ -193,9 +203,9 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
                                     'CHECKIMAGE_NAME' : os.path.join(folders.temp,
                                                         IMG.name+'_sex.fits'),
                                     'PIXEL_SCALE' : IMG.pixel_scale,
-                                    'DETECT_THRESH': 1.0,   # 1.5
+                                    'DETECT_THRESH': 1.3,   # 1.5
                                     "DEBLEND_MINCONT": 0.005,
-                                    "DEBLEND_NTHRESH": 32,
+                                    "DEBLEND_NTHRESH": back_size,
                                     'PHOT_FLUXFRAC': 0.9, 
                                     'BACK_SIZE':  120,       # 64
                                     'MEMORY_OBJSTACK': 10000,           
@@ -206,8 +216,14 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
     defaultsex.run(recover)
     IMG.obj_id(defaultsex)
 
-    defaultsex.objects[np.where(defaultsex.objects == IMG.id)] = 0
-    
+    if fwhm is None: 
+        stars = defaultsex.catalog['CLASS_STAR']==1.0
+        if np.sum(stars) == 0: stars = defaultsex.catalog['CLASS_STAR'] > 0.8
+        fwhm = np.int8(np.nanmean(defaultsex.catalog['FWHM_IMAGE'][stars]))
+
+    object_index = np.where(defaultsex.objects == IMG.id)
+    defaultsex.objects[object_index] = 0
+
     if not hasattr(IMG,'r_eff'): IMG.r_eff = float(defaultsex.catalog[IMG.id-1]['FLUX_RADIUS'])
     if not hasattr(IMG,'eps'):   IMG.eps = float(defaultsex.catalog[IMG.id-1]['ELLIPTICITY'])
     if not hasattr(IMG,'pa'):    IMG.pa = float(defaultsex.catalog[IMG.id-1]['THETA_IMAGE'])
@@ -219,26 +235,21 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
         if defaultsex.catalog['CLASS_STAR'][ind-1] < 0.5:
             defaultsex.objects[np.where(defaultsex.objects == ind)] = 0
     
-    defaultsex.objects = increase_mask(defaultsex.objects,shape=(4,4))
     IMG.data.mask[np.where(defaultsex.objects != 0)] = 1
 
     #   Step 2.2: Run SExtractor for point sources
 
-    midsex_config  = {"CHECKIMAGE_TYPE": "SEGMENTATION",
-                                    'CHECKIMAGE_NAME' : os.path.join(folders.temp,
-                                    IMG.name+'_sex.fits'),
-                                    'PIXEL_SCALE' : IMG.pixel_scale,
-                                    "DEBLEND_MINCONT": 0.005,
-                                    "DEBLEND_NTHRESH": 32,  
-                                    'DETECT_THRESH': 1.2,
-                                    'BACK_SIZE': 20,
-                                    'PHOT_FLUXFRAC': 0.5,
-                                    'MEMORY_OBJSTACK': 10000,           
-                                    'MEMORY_PIXSTACK': 1000000,     
-                                    'MEMORY_BUFSIZE': 51200}
+    masked_image = np.zeros_like(recover) + recover
+    masked_image[IMG.data.mask] = np.nan
+    masked_image[object_index] = np.nan
+
+    back_size = 3*fwhm**2
+    midsex_config  = defaultsex_config.copy()
+    midsex_config['DETECT_THRESH'] = 1.5
+    midsex_config['BACK_SIZE'] = back_size
     
     midsex = SExtractor(config= midsex_config, params=params)
-    midsex.run(recover)
+    midsex.run(masked_image)
     IMG.obj_id(midsex)
     midsex.objects[np.where(midsex.objects == IMG.id)] = 0
 
@@ -261,19 +272,8 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
 
     #   Step 2.3: Run SExtractor residuals from gaussian smoothing
 
-    pointsex_config = {"CHECKIMAGE_TYPE": "SEGMENTATION",
-                        'CHECKIMAGE_NAME' : os.path.join(folders.temp,
-                                        IMG.name+'_sex.fits'),
-                        'PIXEL_SCALE' : IMG.pixel_scale,
-                        "DEBLEND_MINCONT": 0.005,
-                        "DEBLEND_NTHRESH": 32,
-                        'DETECT_MINAREA': fwhm/IMG.pixel_scale, 
-                        "BACK_SIZE": 64,
-                        'DETECT_THRESH': 0.9,
-                        'PHOT_FLUXFRAC': 0.5,
-                        'MEMORY_OBJSTACK': 10000,           # number of objects in stack
-                        'MEMORY_PIXSTACK': 1000000,         # number of pixels in stack
-                        'MEMORY_BUFSIZE': 51200}
+    pointsex_config = midsex_config.copy()
+    pointsex_config['DETECT_THRESH'] = 1.0
 
     pointsex = SExtractor(config = pointsex_config, params=params)
     pointsex.run(get_bipeaks(IMG.data.data,n=2.5,sigma=5))
@@ -287,17 +287,23 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
     index = filter_distance2D(np.array([pointsex.catalog['X_IMAGE'],
                                         pointsex.catalog['Y_IMAGE']]),
                            IMG.pix, IMG.pa*np.pi/180, IMG.eps, 1.5*IMG.r_eff)
+    index = sigma_filter(pointsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE'], 
+                            sigma=3, weights=weights[index])
 
     for ind in sigma_filter(pointsex.catalog[index], ['ISOAREA_IMAGE','FWHM_IMAGE'], 
-                            sigma=3, weights=weights[index]):
+                        sigma=3, weights=weights[index]):
         pointsex.objects[np.where(pointsex.objects == ind)] = 0
-    for ind in index:
-        if pointsex.catalog['FWHM_IMAGE'][ind-1] < fwhm*1.2:
-            pointsex.objects[np.where(pointsex.objects == ind)] = 0
-    
-    pointsex.objects = increase_mask(pointsex.objects, shape = (2,2))
 
+    
     IMG.data.mask[np.where(pointsex.objects != 0)] = 1
+
+    # Filter mask and growth math according to FWHM
+
+    kernel = gaussian2D(l=fwhm,sig=fwhm//2)
+    IMG.data.mask  = cv2.dilate(cv2.erode(IMG.data.mask.astype(np.float32),kernel),kernel)
+
+    IMG.data.mask = cv2.dilate(IMG.data.mask.astype(np.float32), kernel)
+
 
     #   Step 3: Save the files 
     
@@ -319,6 +325,43 @@ def sexmask(IMG, folders, fwhm=1.0, plot=False, temp=False):
         os.remove(os.path.join(folders.temp,f'{IMG.name}_sex.fits'))
     
     return os.path.isfile(folders.mask)
+
+def fastmask(data, center, nsigma=1, fwhm=5):
+    '''
+    create quick mask for testing porpuses
+    Parameters:
+    ----------
+        data : 2D array
+                Image data.
+        center : tuple
+                Center of the galaxy (x,y).
+        nsigma : float
+                Number of sigma to use as threshold. Default is 1.
+        fwhm : float
+                Full width half maximum of the gaussian kernel. Default is 5.
+    Returns:
+    -------
+        mask : 2D array
+                Mask with the same shape as data.
+    '''
+    x,y = center
+    center = (np.int(y),np.int(x))
+    mask = np.zeros_like(data)
+    mean, median, std = sigma_clipped_stats(data, sigma=3.0)    
+    mask[data > median + nsigma*std] = 1
+    mask = cv2.connectedComponentsWithAlgorithm(mask.astype(np.uint8), connectivity=8, ltype=cv2.CV_32S, ccltype=cv2.CCL_WU)[1]
+    mask[mask==mask[center]]=0
+    kernel = np.ones((fwhm//2 +1,fwhm//2 +1))
+    mask =  cv2.dilate(cv2.erode(mask.astype(np.float32),kernel),kernel)
+    peaks = get_bipeaks(data)
+    N,label,stats,_ = cv2.connectedComponentsWithStatsWithAlgorithm(peaks.astype(np.uint8), connectivity=8, ltype=cv2.CV_32S, ccltype=cv2.CCL_WU)
+    eps = stats[:,2]/stats[:,3]
+    label[np.isin(label, np.argwhere((eps<0.8) + (eps>1.2)))]=0
+    mask[label!=0] = 1
+    mask = cv2.connectedComponentsWithAlgorithm(mask.astype(np.uint8), connectivity=8, ltype=cv2.CV_32S, ccltype=cv2.CCL_WU)[1]
+    mask[center]=0
+    mask = cv2.dilate(mask.astype(np.float32),kernel).astype(np.uint16)
+    return mask
 
 def mtomask(IMG, folders, plot=False):
     '''

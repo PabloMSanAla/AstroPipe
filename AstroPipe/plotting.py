@@ -34,6 +34,7 @@ matplotlib.rcParams['ytick.minor.visible'] = True
 matplotlib.rcParams['legend.fancybox'] = True
 matplotlib.rcParams['legend.fontsize'] = 16
 matplotlib.rcParams['axes.titlesize']=16
+matplotlib.rcParams['axes.linewidth'] = 1.3
 
 
 def gaussian(x, mu, var, A=1):
@@ -207,15 +208,34 @@ def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1, mask=None
         plt.tight_layout()
         return ax
     
-def histplot(data):
+def histplot(data, vmin=None, vmax=None):
     '''
-    Creates histogram of the data given.
+    Creates histogram of the data given. 
+
+    Parameters
+    ----------
+        data : array_like
+            Data to plot.
+        vmin : float, optional
+            Minimum value to plot.
+        vmax : float, optional
+            Maximum value to plot.
+    Returns
+    -------
+        fig : matplotlib.figure.Figure
+            Figure object.
+        ax : matplotlib.axes.Axes
+            Axes object.
     '''
     mean,med,std = sigma_clipped_stats(data, sigma=2.5)
-    q25,q99 = np.nanpercentile(data,[25,99.9])
+    q99 = np.nanpercentile(data,99.9)
+    
+    hrange = [mean-10*std, q99*1.1]
+    if vmin is not None: hrange[0] = vmin 
+    if vmax is not None: hrange[1] = vmax 
+    
     fig,ax = plt.subplots(1,1,figsize=(16,4))
-
-    ax.hist(data.flatten(),range=[mean-10*std, q99*1.1],bins=1000)
+    ax.hist(data.flatten(),range=hrange,bins=1000)
     ax.axvline(med,color='red',ls=':')
     ax.axvline(med-std,color='red',ls='--')
     ax.axvline(med+std,color='red',ls='--')
@@ -227,7 +247,7 @@ def histplot(data):
     fig.tight_layout()
     return fig,ax
 
-def surface_figure(image, profile, out=None, **kwargs):
+def surface_figure(image, profile, out=None, mumax=None, radmax=None, **kwargs):
     '''Function that creates a figure with the image, the profile and the mask.
      In the first axes will show the surface brightness image, 
     in the second the image with the mask and the ellipses fit to create the profile
@@ -242,6 +262,10 @@ def surface_figure(image, profile, out=None, **kwargs):
             Profile object to plot.
         out : str, optional
             Path to save the figure. If None, the figure will not be saved.
+        mumax : float, optional
+            Maximum surface brightness value to plot.
+        radmax : float, optional
+            Maximum radius value to plot in pixels.
         **kwargs : dict, optional
         
     Returns
@@ -257,12 +281,19 @@ def surface_figure(image, profile, out=None, **kwargs):
     axpa = plt.subplot2grid((5,3),(3,2),rowspan=1,sharex=axmu)
     axeps = plt.subplot2grid((5,3),(4,2),rowspan=1,sharex=axmu)
 
+    if mumax is None: 
+        arglim = np.where(np.isnan(profile.mu) * (profile.rad > profile.rad[ut.closest(profile.mu,24)]))[0]
+        arglim = arglim[0]-1 if arglim.any() else len(profile.mu)-1
+        mumax = profile.mu[arglim] if not np.isnan(profile.mu[arglim]) else 32
+    if radmax is None: radmax = profile.rad[ut.closest(profile.mu, mumax)]
+
     # Properties
     extent = np.array([-image.x,image.data.shape[1]-image.x,
                     -image.y,image.data.shape[0]-image.y]).astype(float)
     extent *= image.pixel_scale
-
-    specs = {'vmin':20, 'vmax':26, 'cmap':'nipy_spectral', 
+    vmax = np.ceil(ut.mag_limit(image.bkgstd, Zp=image.zp, omega=image.pixel_scale, scale=image.pixel_scale,n=1))
+    if np.isnan(vmax): vmax = mumax - 5
+    specs = {'vmin':np.ceil(np.nanmin(profile.mu)), 'vmax':vmax, 'cmap':'nipy_spectral', 
             'origin':'lower', 'interpolation':'none', 'extent':extent}
     
     for key in kwargs: specs[key] = kwargs[key]
@@ -273,16 +304,18 @@ def surface_figure(image, profile, out=None, **kwargs):
     axmask.imshow(magnitude, **specs)
     axmask.imshow(image.data.mask, origin='lower',cmap=mask_cmap(alpha=0.5), extent=extent)
     axmask = plot_ellipses(profile.rad*image.pixel_scale, profile.pa, profile.eps, 
-                        np.array((profile.x-image.x, profile.y-image.y)), ax=axmask, step=5,alpha=0.6)
+                        np.array((profile.x-image.x, profile.y-image.y)), 
+                        ax=axmask, step=5, alpha=0.6, max_r=radmax*image.pixel_scale)
 
     fig = profile.plot(axes=(axmu,axpa,axeps))
 
     # Properties 
     for ax in [axim, axmask]:
-        ax.set_xlim(profile.rad[-1]*image.pixel_scale*np.array([-1,1]))
-        ax.set_ylim(profile.rad[-1]*image.pixel_scale*np.array([-1,1]))
+        ax.set_xlim(np.array([-1.1,1.1])*radmax*image.pixel_scale)
+        ax.set_ylim(np.array([-1.1,1.1])*radmax*image.pixel_scale)
         ax.set_xlabel('Distance [arcsec]',fontsize=14)
-        
+    
+    
     for ax in [axmu,axeps,axpa]:
         ax.yaxis.set_label_position("right")
         ax.yaxis.set_ticks_position("right")
@@ -295,18 +328,20 @@ def surface_figure(image, profile, out=None, **kwargs):
             transform=axim.transAxes, fontweight='bold')
 
     # Colorbar inside profile axes
-    cbarax = axmu.inset_axes([0.9*profile.rad[-1]*image.pixel_scale, specs['vmin'], 
-                            0.05*profile.rad[-1]*image.pixel_scale, specs['vmax']-specs['vmin']],
+    cbarax = axmu.inset_axes([0.9*radmax*image.pixel_scale, specs['vmin'], 
+                            0.05*radmax*image.pixel_scale, specs['vmax']-specs['vmin']],
                 transform=axmu.transData)
     cbar = fig.colorbar(im, cax=cbarax)
     cbarax.axis('off')
     cbarax.invert_yaxis()
+    axmu.set_ylim([mumax*1.15,0.95*profile.mu[np.isfinite(profile.mu)][0]])
+    axmu.set_xlim(np.array([-0.05,1.1])*radmax*image.pixel_scale)
 
     fig.subplots_adjust(top=0.915, bottom=0.09,
                         left=0.045, right=0.95,
                         hspace=0.3, wspace=0.1)
     if out:
-        fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
+        fig.savefig(out, format='pdf', dpi=300, bbox_inches='tight', pad_inches=0.1)
 
     return fig
 

@@ -15,22 +15,40 @@ from astropy.wcs import WCS, utils
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
+from scipy.signal import convolve2d
+# from .masking import gaussian
 
 from scipy.signal import argrelextrema
+from scipy import stats
 
 from photutils.centroids import centroid_com, centroid_quadratic, centroid_2dg
 
 import datetime
+import warnings
 
-
-
-def where(list_conditions):
-    index = list_conditions[0]
-    for cond in list_conditions[1:]:
-        index = np.multiply(index, cond)
-    return np.where(index)
 
 def mag_limit(std, Zp=22.5, omega=10, scale=0.33, n=3):
+    ''' Computes the surface brightness limit of the image 
+    given the STD according to Román et al. 2020. Appendix A. 
+    
+    Parameters
+    ----------
+        std : float, or array
+            Standard deviation of the image.
+        Zp : float, optional
+            Zero point of the image. The default is 22.5.
+        omega : float, optional
+            Area of the image in arcsec^2. The default is 10.
+        scale : float, optional
+            Scale of the image in arcsec/pixel. The default is 0.33.
+        n : int, optional
+            Number of sigma to use. The default is 3.
+    
+    Returns
+    -------
+        mag : float
+            Surface brightness limit of the image.
+    '''
     return -2.5 * np.log10(n * std / (scale * omega)) + Zp
 
 def check_print(message):
@@ -38,18 +56,64 @@ def check_print(message):
 
 def redshift_to_kpc(redshift,H0=70* u.km / u.s / u.Mpc, 
                              Tcmb0 = 2.725* u.K, Om0=0.3):
+    '''Function that given a redshift returns the physical distance
+    in kpc. It uses the cosmology from astropy.cosmology.
+    
+    Parameters
+    ----------
+        redshift : float, or array
+            Redshift of the object.
+        H0 : float, optional
+            Hubble constant. The default is 70.
+        Tcmb0 : float, optional
+            CMB temperature. The default is 2.725.
+        Om0 : float, optional
+            Matter density. The default is 0.3.
+    
+    Returns
+    -------
+        distance : float
+            Physical distance in kpc.
+    '''
     cosmo = FlatLambdaCDM(H0=H0 , Tcmb0=Tcmb0 , Om0=Om0)
     return (cosmo.luminosity_distance(redshift) * 1000 * u.kpc/u.Mpc).value
 
-def kpc_to_arcsec(kpc,distance):
+def kpc_to_arcsec(kpc, distance):
+    '''Function that given a physical size of an object
+    and its physical distance it converts it into the
+    angular size in arcseconds.
+    
+    Parameters
+    ----------
+        kpc : float
+            Physical size in kpc.
+        distance : float
+            Physical distance in kpc.
+    
+    Returns
+    -------
+        arcsec : float
+            Angular size in arcseconds.
+    '''
     arcsec_to_rad = np.pi/(180*3600)
     return (kpc)/(arcsec_to_rad*distance)
 
 def arcsec_to_kpc(arcsec, distance):
-    '''Funtion that given a angular size of an object
+    '''Function that given a projected angular size of an object
     and its physical distance it converts it into the
     physical size in same units.
+
+    Parameters
+    ----------
+        arcsec : float
+            Angular size in arcsec.
+        distance : float
+            Physical distance in kpc.
     
+    Returns
+    -------
+        kpc : float
+            Physical size in kpc.
       '''
     arcsec_to_rad = np.pi/(180*3600)
     return arcsec*arcsec_to_rad*distance
@@ -59,6 +123,12 @@ def convert_PA(angle):
         return 180 + angle
     else:
         return angle
+
+def where(list_conditions):
+    index = list_conditions[0]
+    for cond in list_conditions[1:]:
+        index = np.multiply(index, cond)
+    return np.where(index)
 
 def binarize(image, nsigma=1, mask=None):
     """Binarize an image using a threshold of nsigma*std.
@@ -137,8 +207,24 @@ def make_parser():
 
     return parser
 
-def closest(data,value):
+def closest(data, value):
+    '''
+    Find a value in an array closest to the input value
+
+    Parameters
+    ----------
+        array : numpy.array
+            Input 1D array
+        value : float
+            Value in array you want to find
+    
+    Returns
+    -------
+        index : int
+            Index of the closest value in the array
+    '''
     return np.nanargmin(np.abs(data-value))
+
 
 
 def cutout(file, center, width, hdu=0, mode='image', out=None):
@@ -190,6 +276,13 @@ def cutout(file, center, width, hdu=0, mode='image', out=None):
 
     return os.path.isfile(out)
 
+def get_pixel_scale(header):
+    '''
+    Funtion that given a header returns the pixel scale in arcsec/pixel.
+    '''
+    wcs = WCS(header)
+    scale = np.abs(np.mean(utils.proj_plane_pixel_scales(wcs))*3600)
+    return scale
 
 def crop(data, header, center, width, out=None):
     '''
@@ -205,7 +298,7 @@ def crop(data, header, center, width, out=None):
         center: tuple
             Center of the cropped image in pixels.
         width: tuple
-            Width of the cropped image in pixels.
+            Width of the cropped image in pixels. (x,y)
     
     Returns
     -------
@@ -217,26 +310,121 @@ def crop(data, header, center, width, out=None):
     wcs = WCS(header)
     center = np.int32(center)
     width = np.int32(width)
+    hasmask = hasattr(data, 'mask')
 
-    new_data = data[center[1]-(width[1]//2 + 1):center[1]+width[1]//2,
-                    center[0]-(width[0]//2 + 1):center[0]+width[0]//2]
+    if hasmask: data , mask = data.data , data.mask
 
-    new_wcs = wcs[center[1]-(width[1]//2 + 1):center[1]+width[1]//2,
-                    center[0]-(width[0]//2 + 1):center[0]+width[0]//2]
+    # Set limits of the cropping
+    x0 , x1 = np.int64((center[0]-(width[0]//2 + 1),center[0]+width[0]//2))
+    y0 , y1 = np.int64((center[1]-(width[1]//2 + 1),center[1]+width[1]//2))
+    
+    # Sanity checks
+    if x0 < 0: x0 = 0
+    if x1 > data.shape[1]: x1 = data.shape[1]
+    if y0 < 0: y0 = 0
+    if y1 > data.shape[0]: y1 = data.shape[0]
+    
+    # Crop image and wcs
+    new_data = data[y0:y1, x0:x1]
+    new_wcs = wcs[y0:y1, x0:x1]
+
+    if hasmask:
+        new_mask = mask[y0:y1, x0:x1]
+        new_data = np.ma.masked_array(new_data, mask=new_mask)
     
     header.update(new_wcs.to_header())
     header['COMMENT'] = "= Cropped fits file ({}).".format(datetime.date.today())
-    header['ICF1PIX'] = (f'{center[1]-(width[1]//2 + width[1]%2)}:{center[1]+width[1]//2},{center[0]-(width[0]//2 + width[0]%2)}:{center[0]+width[0]//2}',
-                          'Range of pixels used for this cutout')
+    header['ICF1PIX'] = (f'{y0}:{y1},{x0}:{x1}',
+                          'Range of pixels used for this cutout [y0:y1,x0:x1]')
     
     if out is not None: fits.PrimaryHDU(new_data, header).writeto(out, overwrite=True)
     
-    return new_data, header 
+    return new_data, header, ((x0,x1),(y0,y1))
+
+def localSlope(x, y):
+    '''
+    For deriving the local slope profile of two arrays
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        The abscissa axis array
+    y : numpy.ndarray
+        The ordinate axis array
+
+    Returns
+    -------
+    dydx : numpy.ndarray
+        An array of slope values between x and y
+    '''
+    dydx = np.zeros(len(y))
+    dydx[1:] = np.diff(y) / np.diff(x)
+    dydx[0] = y[0] / x[0]  # Replace first value with ratio of initial points
+
+    return dydx
+
+def derivative(x, y, n=4):
+    """
+    Computes de slope from the n adjacent points using 
+    linear regression.
+
+    Parameters
+    ----------
+        x : array
+            x-axis values.
+        y : array
+            y-axis values.
+        n : int, optional
+            Number of adjacent points to use. The default is 4.
+    
+    Returns
+    -------
+        deriv : array
+            Slope (dy/dx) of the line x and y.
+    """
+    index = np.isfinite(x) & np.isfinite(y)
+    deriv = np.zeros_like(x)
+    x = np.array(x)[index]
+    y = np.array(y)[index]
+    
+    der = np.zeros_like(x)
+    for i in range(len(x)):
+        if i<n:
+            slope = stats.linregress(x[:i+n],y[:i+n])[0]
+        elif len(x)-i<n:
+            slope = stats.linregress(x[i-n:],y[i-n:])[0]
+        else:
+            slope = stats.linregress(x[i-n:i+n],y[i-n:i+n])[0]
+        der[i] = slope
+    deriv[index] = der
+    if any(~index): deriv[~index] = np.NaN
+    return deriv
 
 def flashprint(string):
     print(string, end='\r')
     sys.stdout.flush()
 
+def get_scale(header):
+    '''
+    Funtion that given a header returns the pixel scale in arcsec/pixel.
+    '''
+    wcs = WCS(header)
+    scale = np.abs(np.mean(utils.proj_plane_pixel_scales(wcs))*3600)
+    return scale
+
+# def sim_rdn_stars(shape, nstars, fwhm, I0):
+#     '''
+#     Simulates a image with nstars randomly distributed in the image
+#     with same intensity I0 and a gaussian PSF with fwhm.
+#     '''
+#     image = np.zeros(shape)
+#     xrdn = np.random.randint(0,shape[0],nstars)
+#     yrdn = np.random.randint(0,shape[1],nstars)
+#     image[xrdn,yrdn] = I0
+#     psf = gaussian(fwhm, shape)
+#     stars = convolve2d(image,psf,mode='same')
+#     stars = I0 * (stars - np.nanmin(stars)) / np.nanmax(stars)
+#     return stars
 
 
 def find_center(data, center, width=30):
@@ -352,7 +540,7 @@ def getFWHM(x,y, oversamp=100, height=False):
     if height: return fwhm, fwhm_y
 
 
-def find_mode_2(x, weights=None):
+def find_mode(x, weights=None):
     """
     Locate the mode of a distribution by fitting a polynomial within +-one-sigma interval.
     :param x: Collection of data points
@@ -396,10 +584,130 @@ def find_mode_2(x, weights=None):
             return x0, x0+delta*sigma, polynomial_fit*delta.size/x.size/sigma
 
 
-# function that converts aparent magnitude to absolute magnitude given redshift 
-def abs_mag(z, apparent_mag):
-    distance = redshift_to_kpc(z)
+def absoluteMagnitude(distance, apparent_mag):
+    '''Transform apparent magnitude to absolute magnitude
+    As apparent mag - 5*np.log10(distance) + 5.
+    
+    Parameters
+    ----------
+        distance : float
+            Distance in pc
+        apparent_mag : float
+            Apparent magnitude
+    
+    Returns
+    -------
+        absolute_mag : float'''
     return apparent_mag - 5*np.log10(distance) + 5
+
+
+def ttype_iband_offset(ttype, rms=0.19):
+    '''
+    Function that converts i-band magnitude to 3.6mu m magnitude.
+    Using Juan Manuel Falcón Ramirez's TFG results. 
+    
+    Parameters:
+    ----------
+        ttype : float
+                T-type of the galaxy.
+    
+    Returns:
+    -------
+        offset : float
+                Offset to be added to the i-band magnitude.
+    '''
+
+    offset = 0.0070*ttype - 0.009*ttype + 0.152
+    e_offset =  0.0004*ttype -  0.004*ttype + 0.011
+    e_offset = np.sqrt(e_offset**2 + rms**2)
+    return offset
+
+def mass_iband_offset(mass, rms=0.17):
+    '''
+    Function that converts i-band magnitude to 3.6mu m magnitude.
+    Using Juan Manuel Falcón Ramirez's TFG results. 
+    
+    Parameters:
+    ----------
+        mass : float
+                Log Mass of the galaxy in Solar Masses.
+    
+    Returns:
+    -------
+        offset : float
+                Offset to be added to the i-band magnitude.
+    '''
+
+    offset = -0.052*mass*mass + 0.67*mass - 1.20
+    e_offset = -0.007*mass*mass + 0.13*mass - 0.61
+    e_offset = np.sqrt(e_offset**2 + rms**2)
+    return offset, e_offset
+
+def magnitude_to_mass(magnitude, distance, mass_to_light=0.6, absmagsolar = 6.02):
+    '''
+    Function that converts magnitude to mass in solar masses.
+    Parameters:
+    ----------
+        magnitude : float
+                Magnitude of the galaxy.
+        distance : float
+                Distance to the galaxy in Mpc.
+        mass_to_ratio : float
+                Mass to luminosity ratio. Default is 0.6.
+        absmagsolar : float
+                Absolute magnitude of the sun. Default is 6.02. Mag at 3.6 micron.
+                Reference: Willmer 2018. DOI 10.3847/1538-4365/aabfdf
+    Returns:
+    -------
+        mass : float
+                Log Mass of the galaxy in solar masses.
+    '''
+    absmag = absoluteMagnitude(distance*1e6, magnitude)    
+    luminosity =  10**(-0.4*(absmag - absmagsolar))
+    mass = mass_to_light*luminosity
+    return  np.log10(mass)
+
+
+
+def optical_to_IR(mag, distance, epsilon=1e-5, mass_to_light=0.6, N=100, verbose=False):
+    '''
+    Iterative process to find the offset between optical i-band and 3.6 micron magnitudes
+    using the relation between mass and color. 
+
+    Parameters:
+    ----------
+        mag : float
+                Magnitude of the galaxy in i-band.
+        distance : float
+                Distance to the galaxy in Mpc.
+        epsilon : float
+                Precision of the iterative process. Default is 1e-5.
+        mass_to_light : float
+                Mass to luminosity ratio. Default is 0.6.
+        N : int
+                Maximum number of iterations. Default is 100.
+        verbose : bool
+                If True, prints the offset and mass at each iteration at index=0.
+    Returns:
+    -------
+        offset : float
+                Offset to be added to the i-band magnitude.
+    '''
+    n = len(mag) if mag is np.ndarray else 1
+    masses, offsets = np.zeros((2,N,n))
+    masses[0,:] =  magnitude_to_mass(mag, distance, mass_to_light=mass_to_light)
+    epsilon , difference, i = 1e-5, np.ones_like(mag), 0
+    while (i < N-1) and (difference > epsilon).any():
+        offsets[i+1,:],e_offset = mass_iband_offset(masses[i,:])
+        masses[i+1,:] = magnitude_to_mass(mag + offsets[i+1,:], distance, mass_to_light=mass_to_light)
+        difference = np.abs(offsets[i,:] - offsets[i+1,:])
+        if verbose:
+            print(f'{i:2d}  {offsets[i,0]:.5f}   {masses[i,0]:.5f}  {difference[0]:.5f}') 
+        i+=1
+    if i==N-1:
+        warnings.warn('Maximum number of iterations reached. Convergence not reached.')
+    return offsets[i,:], e_offset
+
 
 def find(inDIR='',filetype='*.fits'):
 

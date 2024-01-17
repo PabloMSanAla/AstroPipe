@@ -217,7 +217,7 @@ def s4g_images(name, channel=1, mask=False, sigma=False, outdir='',verbose=False
     """
     sucess = True
     
-    url = f'https://irsa.ipac.caltech.edu/data/SPITZER/S4G/galaxies/{name}/P1/{name}.phot.{channel}.fits'
+    url = f'https://irsa.ipac.caltech.edu/data/SPITZER/S4G/galaxies/{name}/P4/{name}.phot.{channel}_nonan.fits'
     if verbose: print(url)
     filename = wget.download(url,out=outdir)
     sucess *= os.path.isfile(filename)
@@ -239,7 +239,7 @@ def s4g_images(name, channel=1, mask=False, sigma=False, outdir='',verbose=False
 
     return sucess
 
-def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='ls-dr10', verbose=False):
+def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='ls-dr10', verbose=False, rgb=False):
     '''
     Downloads cutotus from the Legacy Survey Server.
 
@@ -268,11 +268,15 @@ def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='
             True if the mosaic was downloaded successfully.
     '''
 
-    url = f'https://www.legacysurvey.org/viewer/fits-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&bands={bands}&size={round(width*3600/scale)}'
+    url = f'https://www.legacysurvey.org/viewer/fits-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&bands={bands}&size={np.int64(width*3600/scale)}'
     # url = f'https://www.legacysurvey.org/viewer/cutout.fits?ra={ra}&dec={dec}&layer=ls-dr9&pixscale={scale}&size={round(width*3600/scale)}'
     if verbose: print(url)
 
     filename = wget.download(url, out=outdir)
+
+    if rgb: 
+        url = f'https://www.legacysurvey.org/viewer/jpeg-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&size={np.int64(width*3600/scale)}'
+        rgbfile = wget.download(url, out=outdir.replace('.fits','.jpg'))
     if verbose: print(filename)
     return filename
 

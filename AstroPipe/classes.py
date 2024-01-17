@@ -31,6 +31,9 @@ from .plotting import noise_hist, make_cmap, show
 from .utils import *
 from .profile import background_estimation, isophotal_photometry, elliptical_radial_profile
 
+import AstroPipe
+path_to_package = os.path.dirname(AstroPipe.__file__)
+
 
 import sys
 import sewpy
@@ -181,10 +184,19 @@ class Image:
             None
         '''
 
-        self.data, self.header = crop(self.data, self.header, center, width)
+        self.data, self.header, cropRange = crop(self.data, self.header, center, width)
+        
         self.cropParams = {'center': np.int64(center),
-                            'width': np.int64(width)}
-    
+                            'width': np.int64(width),
+                            'range': cropRange}
+        self.wcs = WCS(self.header)
+
+        if hasattr(self,'pix'):
+            x,y = cropRange
+            self.x = np.int64(center[0]-x[0])
+            self.y = np.int64(center[1]-y[0])
+            self.pix = np.array([self.x,self.y])
+        
     def copy(self):
         '''Method to copy the class in another variable
         '''
@@ -266,9 +278,9 @@ class Image:
       
         ax = show(self.data-self.bkg, ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, plotmask=plotmask,
                   zp=self.zp, pixel_scale=self.pixel_scale)
-
-        ax.set_xlim([self.x-width,self.x+width])
-        ax.set_ylim([self.y-width,self.y+width])
+        if hasattr(self,'x'):
+            ax.set_xlim([self.x-width,self.x+width])
+            ax.set_ylim([self.y-width,self.y+width])
         ax.text(0.02, 1, self.name, horizontalalignment='left',
                 verticalalignment='bottom', transform=ax.transAxes, fontweight='bold',fontsize='large')
         plt.tight_layout()
@@ -300,10 +312,13 @@ class Image:
         else:
             self.data = data
 
-    def set_morphology(self, pa=None, eps=None,reff=None):
+    def set_morphology(self, pa=None, eps=None, reff=None, x=None,y=None):
         if pa: self.pa = pa
         if eps: self.eps = eps
         if reff: self.reff = reff
+        if x: self.x = np.int64(x)
+        if y: self.y = np.int64(y)
+        if x and y: self.pix = np.array([self.x, self.y])
 
     def set_background(self, bkg=None, bkgstd=None, bkgrad=None):
         if bkg: self.bkg = bkg
@@ -346,12 +361,13 @@ class SExtractor:
     segmentation map and catalog from SExtractor.
     '''
 
-    def __init__(self, params=None, config=None):
+    def __init__(self, params=None, config=None, sexpath=None):
 
+        sex_param_path = os.path.abspath(join(path_to_package, '..','extern','SExtractor'))
         self.files_default = {
-            "FILTER_NAME": "/Users/pmsa/scripts/SExtractor/default.conv",
-            "PSF_NAME": "/Users/pmsa/scripts/SExtractor/default.psf",
-            "STARNNW_NAME": "/Users/pmsa/scripts/SExtractor/default.nnw",
+            "FILTER_NAME": join(sex_param_path,'default.conv'),
+            "PSF_NAME": join(sex_param_path, "default.psf"),
+            "STARNNW_NAME": join(sex_param_path,"default.nnw"),
             'PHOT_FLUXFRAC': 0.9,
         }
 
@@ -382,6 +398,9 @@ class SExtractor:
         if config is not None:
             self.add_config(config)
 
+        if not sexpath: sexpath = 'sex'
+        self.sexpath = sexpath
+
     def add_params(self, p_list):
         
         self.params = np.unique(self.params + p_list).tolist()
@@ -391,7 +410,7 @@ class SExtractor:
             self.config[key] = c_dict[key]
 
     def run(self, file, keep=False):
-        sew = sewpy.SEW(params=self.params, config=self.config, sexpath="sex")
+        sew = sewpy.SEW(params=self.params, config=self.config, sexpath=self.sexpath)
         self.wordir = sew.workdir
         if isinstance(file, str):
             self.file = file
