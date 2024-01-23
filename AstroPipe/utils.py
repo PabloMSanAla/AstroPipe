@@ -10,6 +10,8 @@ from copy import deepcopy
 from fabada import fabada
 import argparse
 from math import gamma
+from PyPDF2 import PdfReader, PdfMerger
+
 
 from astropy.wcs import WCS, utils
 from astropy.coordinates import SkyCoord
@@ -539,6 +541,27 @@ def getFWHM(x,y, oversamp=100, height=False):
     if not height: return fwhm
     if height: return fwhm, fwhm_y
 
+def merge_pdf(infnList, outfn):
+    '''Given a list of PDF files, 
+    merge them in one pdf. 
+    
+    PARAMETERS
+    ----------
+        infnlist: list
+            list of pdf filenames
+        outfn: str
+            name of the merge file
+    
+    RETURNS
+    -------
+        boolean: 
+            True if it was created
+    '''
+    merger = PdfMerger()
+    for infn in infnList:
+        merger.append(PdfReader(infn, 'rb'))
+    merger.write(outfn)
+    return os.path.isfile(outfn)
 
 def find_mode(x, weights=None):
     """

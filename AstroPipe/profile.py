@@ -85,6 +85,11 @@ class Profile:
     '''
     def __init__(self, filename=None,  max_radius=None, init_radius=1, growth_rate=1.01):
         
+        self.columns = ['radius', 'intensity', 'intensity_err', 'flux', 'flux_err',
+                        'npixels','pa', 'pa_err', 'eps', 'eps_err', 'x', 'y']
+        self.units = ['arcsec', 'counts', 'counts','counts', 'counts','na', 
+                      'deg', 'deg', 'na', 'na', 'pixel', 'pixel']
+
         if max_radius is not None:
             alpha = np.log10(growth_rate)
             size = np.log10(max_radius)//alpha + 2
@@ -100,6 +105,8 @@ class Profile:
         self.bkgstd = 0 
         self.zp = 0 
         self.pixscale = 1
+        self.meta = {'zp': self.zp,   'pixscale': self.pixscale, 
+                     'bkg':self.bkg , 'bkgstd':   self.bkgstd}
 
         if filename is not None: 
             self.load(filename)
@@ -156,10 +163,7 @@ class Profile:
         if zp is not None: self.zp = zp
         if pixscale is not None: self.pixscale = pixscale
 
-        self.columns = ['radius', 'intensity', 'intensity_err', 'flux','flux_err',
-                        'npixels','pa', 'pa_err', 'eps', 'eps_err', 'x', 'y']
-        self.units = ['arcsec', 'counts', 'counts','counts', 'counts','na', 
-                      'deg', 'deg', 'na', 'na', 'pixel', 'pixel']
+        
         self.meta = {'zp':zp, 'pixscale':pixscale, 'bkg':bkg , 'bkgstd':bkgstd}
 
         if zp is not None and pixscale is not None and any(self.int>0):
@@ -472,7 +476,8 @@ class Profile:
         
         table = Table([self.rad, self.int, self.intstd, 
                        self.flux, self.fluxstd, self.npixels,
-                       self.pa, self.eps, self.x, self.y], 
+                       self.pa, self.pastd, self.eps, self.epsstd,
+                       self.x, self.y], 
                         names=self.columns,
                         units=self.units, meta=self.meta)
         table.write(filename, overwrite=overwrite)
@@ -480,11 +485,14 @@ class Profile:
     
     def load(self, filename):
         table = Table.read(filename)
-        self.set_params(np.array(table['radius'].value), 
-                        np.array(table['intensity'].value), np.array(table['intensity_err'].value), 
-                        np.array(table['pa'].value), np.array(table['eps'].value), 
-                        (np.array(table['x'].value), np.array(table['y'].value)), 
-                        table.meta['BKG'], table.meta['BKGSTD'], table.meta['ZP'], table.meta['PIXSCALE'])
+        self.set_params(np.array(table[self.columns[0]].value), 
+            np.array(table[self.columns[1]].value), np.array(table[self.columns[2]].value), 
+            np.array(table[self.columns[3]].value), np.array(table[self.columns[4]].value), 
+            np.array(table[self.columns[5]].value), 
+            np.array(table[self.columns[6]].value), np.array(table[self.columns[7]].value), 
+            np.array(table[self.columns[8]].value), np.array(table[self.columns[9]].value),
+            (np.array(table[self.columns[10]].value), np.array(table[self.columns[11]].value)), 
+            table.meta['BKG'], table.meta['BKGSTD'], table.meta['ZP'], table.meta['PIXSCALE'])
         self.table = table
 
 def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, axes=None, color='k', label=None, **kwargs):
@@ -739,7 +747,7 @@ def isophotal_photometry(data, center, pa, eps, reff,  max_r=None, growth_rate=1
     profile.set_params(radii=isolist.sma, intensity=isolist.intens, instensity_err=isolist.int_err,
         flux=isolist.tflux_e, fluxstd=fluxstd, npixels=isolist.npix_e,
         pa=isolist.pa*180/np.pi, pastd=isolist.pa_err*180/np.pi,
-        eps=isolist.eps, epsstd=isolist.eps_err, center=(isolist.x0, isolist.y0))
+        eps=isolist.eps, epsstd=isolist.ellip_err, center=(isolist.x0, isolist.y0))
     
     if plot is not None:
         fig, ax = plt.subplots(1,1,figsize=(8,8))

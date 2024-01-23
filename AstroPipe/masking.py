@@ -345,7 +345,7 @@ def fastmask(data, center, nsigma=1, fwhm=5):
                 Mask with the same shape as data.
     '''
     x,y = center
-    center = (np.int(y),np.int(x))
+    center = (np.int16(y),np.int16(x))
     mask = np.zeros_like(data)
     mean, median, std = sigma_clipped_stats(data, sigma=3.0)    
     mask[data > median + nsigma*std] = 1

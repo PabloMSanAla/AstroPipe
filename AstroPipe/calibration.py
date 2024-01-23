@@ -3,74 +3,161 @@ from re import S
 from astropy.io import fits
 import numpy as np
 import os
+from os.path import join
 from astropy.stats import SigmaClip
 import astroalign
 
 from .classes import AstroGNU
 
+
+class astrometry():
+    '''
+    Class to run astrometry from Python
+    '''
+    def __init__(self, telescope='TSS', sex=None, solve_field=None, config=None):
+        
+        self.config = config
+        self.solve_field = solve_field
+        self.sex = sex
+
+        if not self.config:
+            self.config = '/usr/local/Cellar/astrometry-net/0.93/etc/astrometry.cfg'
+        if not self.solve_field:
+            self.solve_field = '/usr/local/bin/solve-field'
+        if not self.sex:
+            self.sex = '/usr/local/bin/sex'
+        
+        if telescope: self.define_telescope(telescope)
+        
+    def __call__(self, filename, out=None, hdu=0, ra=None, dec=None, verbose=False):
+        ''' Run astrometry on a filename. 
+        
+        Parameters:
+        ----------
+            filename: str
+                Path to the file to be solved.
+            out: str
+                Path to the output file. If None, the output will add _astrom.
+            hdu: int
+                HDU to be solved.
+            ra: float
+                RA of the center of the image.
+            dec: float
+                DEC of the center of the image.
+            verbose: bool
+                If True, print the command to be executed.
+
+        Returns:
+        -------
+            int: 0 if the command was executed successfully.  
+        '''
+        if ra: self.ra = ra
+        if dec: self.dec = dec
+        self.out = out
+        if not self.out:
+            file, ext = os.path.splitext(filename)
+            self.out = file + '_astrom' + ext
+
+        if ra and dec:
+            self.cmd = f'''
+            {self.solve_field} {filename} --no-plots -L {self.L} -H {self.H} -u arcsecperpix --overwrite \
+            --source-extractor-path {self.sex} \
+            --extension {hdu} --config {self.config} --resort --ra {self.ra} \
+            --dec {self.dec} --radius {self.radius} -Unone --temp-axy -Snone -Mnone -Rnone -Bnone\
+            -N {self.out}'''
+        else:
+            self.cmd = f'''
+            {self.solve_field} {filename} --no-plots -L {self.L} -H {self.H} -u arcsecperpix --overwrite \
+            --source-extractor-path {self.sex} \
+            --extension {hdu} --config {self.config} 
+            -N{self.out}'''
+        
+
+        if verbose: print(self.cmd)
+        return os.system(self.cmd)
+
+
+            
+    def define_telescope(self,telescope):
+        if telescope=='TSS':
+            self.L = 0.9
+            self.H = 1.1
+            self.radius = 0.5
+        
+        elif telescope=='INT':
+            self.L = 0.3
+            self.H = 0.4
+            self.radius = 0.4
+        else:
+            print('Telescope not defined.')
+
 # Make an structure to find out if there are darks
 # or bias to make False or True
 class structure():
 
-    def __init__(self,night, extension='.fits'):
+    def __init__(self, night, band=None, extension='.fits'):
         self.night = night
         self.directories = os.listdir(night)
-        self.directories = [s.lower() for s in self.directories]
         self.extension = extension
         self.check_dark()
         self.check_bias()
-        self.check_light()
+        self.check_light(band=band)
         self.check_domeflat()
         self.check_skyflat()
         self.make_calibrated()
 
     def check_dark(self):
-        bool_array = ['dark' in f for f in self.directories]
+        bool_array = ['dark' in f.lower() for f in self.directories]
         if any(bool_array):
-            self.dark = os.path.join(self.night,
+            self.dark = join(self.night,
             self.directories[np.argwhere(bool_array)[0][0]])
-            self.darkList = glob.glob(os.path.join(self.dark,'*'+self.extension))
+            self.darkList = glob.glob(join(self.dark,'*'+self.extension))
         else:
             self.dark = None
     
     def check_bias(self):
-        bool_array = ['bias' in f for f in self.directories]
+        bool_array = ['bias' in f.lower() for f in self.directories]
         if any(bool_array):
-            self.bias = os.path.join(self.night,
+            self.bias = join(self.night,
             self.directories[np.argwhere(bool_array)[0][0]])
-            self.biasList = glob.glob(os.path.join(self.bias,'*'+self.extension))
+            self.biasList = glob.glob(join(self.bias,'*'+self.extension))
         else:
             self.bias = None
         
-    def check_light(self):
-        bool_array = [f.startswith(('li','sc')) for f in self.directories]
+    def check_light(self, band=None):
+        bool_array = [f.lower().startswith(('li','sc')) for f in self.directories]
         if any(bool_array):
-            self.light = os.path.join(self.night,
+            self.light = join(self.night,
             self.directories[np.argwhere(bool_array)[0][0]])
-            self.lightList = glob.glob(os.path.join(self.light,'*'+self.extension))
+            if band: 
+                dirs = [s for s in os.listdir(self.light)]
+                anyband =[band.lower() in f.lower() for f in dirs]
+                if any(anyband):
+                    self.light = join(self.light,dirs[np.argwhere(anyband)[0][0]])
+            self.lightList = glob.glob(join(self.light,'*'+self.extension))
         else:
             self.light = None
     
     def check_domeflat(self):
-        bool_array = ['dome' in f for f in self.directories]
+        bool_array = ['dome' in f.lower() for f in self.directories]
         if any(bool_array):
-            self.domeflat = os.path.join(self.night,
+            self.domeflat = join(self.night,
             self.directories[np.argwhere(bool_array)[0][0]])
-            self.domeflatList = glob.glob(os.path.join(self.domeflat,'*'+self.extension))
+            self.domeflatList = glob.glob(join(self.domeflat,'*'+self.extension))
         else:
             self.domeflats = None
 
     def check_skyflat(self):
-        bool_array = ['sky' in f for f in self.directories]
+        bool_array = ['sky' in f.lower() for f in self.directories]
         if any(bool_array):
-            self.skyflat = os.path.join(self.night,
+            self.skyflat = join(self.night,
             self.directories[np.argwhere(bool_array)[0][0]])
-            self.skyflatList = glob.glob(os.path.join(self.skyflat,'*'+self.extension))
+            self.skyflatList = glob.glob(join(self.skyflat,'*'+self.extension))
         else:
             self.skyflats = None
 
     def make_calibrated(self):
-        self.calibrated = os.path.join(self.night,'calibrated')
+        self.calibrated = join(self.night,'calibrated')
         if not os.path.exists(self.calibrated):
             os.mkdir(self.calibrated)
     
@@ -87,13 +174,13 @@ class structure():
         self.masterbias = file
 
 
-def stack(image_list, hdu=0, sigma=3, maxiters=3):
+def stack(image_list, hdu=0, sigma=3, maxiters=3, dtype=np.float32):
     '''
     Given a file list of images stack them using sigma clipping. 
 
     '''
     shape = fits.getdata(image_list[0],hdu).shape + (len(image_list),)
-    stack = np.zeros(shape,dtype=np.float64)
+    stack = np.zeros(shape, dtype=dtype)
     for i in range(shape[2]):
         stack[:,:,i] = fits.getdata(image_list[i],hdu)
     sigmaclip = SigmaClip(sigma=sigma,maxiters=maxiters)
@@ -112,11 +199,11 @@ def darkstack(dark_list, masterbias = 0, hdu=0, sigma=3, maxiters=3):
     masterdark[np.where(masterdark.mask)] = np.nan
     return masterdark.data
 
-def flatstack(flat_list, masterbias=0, masterdark=0, hdu=0):
+def flatstack(flat_list, masterbias=0, masterdark=0, hdu=0, dtype=np.float32):
     sc_norm = SigmaClip(sigma=2,maxiters=3)
     sc_comb = SigmaClip(sigma=3,maxiters=3)
     shape = fits.getdata(flat_list[0],hdu).shape + (len(flat_list),)
-    masterflat = np.zeros(shape,dtype=np.float64)
+    masterflat = np.zeros(shape,dtype=dtype)
     for i in range(shape[2]):
         masterflat[:,:,i] = fits.getdata(flat_list[i],hdu) - masterbias - masterdark
         norm = np.ma.mean(sc_norm(masterflat[:,:,i]))
@@ -127,23 +214,21 @@ def flatstack(flat_list, masterbias=0, masterdark=0, hdu=0):
     return masterflat.data
 
 def calibrate(lights_list, masterdark=0, masterbias=0, masterflat=1, 
-                           hdu=0, keytime='EXPTIME',dir=None):
+                           hdu=0, keytime='EXPTIME', dir=None, mask=True, dtype=np.float32):
     calibrated_list = []
-    if dir is None: iterpath = True
+    iterpath = True if dir is None else False
 
-    
-        
     for light in lights_list:
         try:
             if iterpath: dir = os.path.dirname(light)
             header = fits.getheader(light,hdu)
-            if keytime in header: time = float(header[keytime])
+            time = float(header[keytime]) if keytime in header else 1
             calibrate = (fits.getdata(light,hdu)-masterdark-masterbias)
-            calibrate = correct_flat(calibrate,masterflat) / time
-            header = fits.getheader(light,hdu)
-            calibrated_list.append(os.path.join(dir,os.path.basename(
+            calibrate = correct_flat(calibrate, masterflat, mask=mask) / time
+            header = fits.getheader(light, hdu)
+            calibrated_list.append(join(dir,os.path.basename(
                         light).replace('.fits','_calibrated.fits')))
-            save_fits(calibrate,header,
+            save_fits(calibrate.astype(dtype),header,
                     calibrated_list[-1])
         except Exception as e: 
             print('Error in calibration of',light, ':')
@@ -151,25 +236,27 @@ def calibrate(lights_list, masterdark=0, masterbias=0, masterflat=1,
         
     return calibrated_list
 
-def calibrate_night(night):
+def calibrate_night(night, masterdark=None, masterbias=None):
     if night.bias:
-        masterbias = stack(glob.glob(os.path.join(night.bias,'*.fit*')))
-        save_fits(masterbias,None,os.path.join(night.bias,'masterbias.fits'))
+        masterbias = stack(glob.glob(join(night.bias,'*.fit*')))
+        save_fits(masterbias,None,join(night.bias,'masterbias.fits'))
     else:
         masterbias = 0
     if night.dark:
-        masterdark = darkstack(glob.glob(os.path.join(night.dark,'*.fit*')),
+        masterdark = darkstack(glob.glob(join(night.dark,'*.fit*')),
                                 masterbias)
-        save_fits(masterdark,None,os.path.join(night.dark,'masterdark.fits'))
+        save_fits(masterdark,None,join(night.dark,'masterdark.fits'))
+    else:
+        masterdark = 0
     
-    for light in glob.glob(os.path.join(night.light,'*.fit*')):
+    for light in glob.glob(join(night.light,'*.fit*')):
         calibrate = fits.getdata(light,0)-masterdark-masterbias
         header = fits.getheader(light,0)
         save_fits(calibrate,header,
-                os.path.join(night.calibrated,os.path.basename(light).split('.')[-2]+'_calibrated.fits'))
+                join(night.calibrated,os.path.basename(light).split('.')[-2]+'_calibrated.fits'))
 
-def save_fits(data,header,path):
-    hdu = fits.PrimaryHDU(data,header)
+def save_fits(data,header,path, dtype=np.float32):
+    hdu = fits.PrimaryHDU(data.astype(dtype), header)
     hdu.writeto(path,overwrite=True)
     
 def correct_flat(data,flat,mask=True):
@@ -180,7 +267,7 @@ def correct_flat(data,flat,mask=True):
     return corrected
 
 def autoflat(flat_files, masterflat=None, hdu=0,
-             config_nc = '-Z15,15 -t0.9 --interpnumngb=9 -d0.95'):
+             config_nc = '-Z30,30 -t0.25 --interpnumngb=9 -d0.8', dtype=np.float32):
 
     sc_norm = SigmaClip(sigma=2,maxiters=3)
     sc_comb = SigmaClip(sigma=3,maxiters=3)
@@ -200,7 +287,7 @@ def autoflat(flat_files, masterflat=None, hdu=0,
     else:
         reference_data = masterflat
 
-    flat = np.zeros(reference_data.shape + (len(flat_files),),dtype=np.float64)
+    flat = np.zeros(reference_data.shape + (len(flat_files),), dtype=dtype)
 
     i=0
     for file in flat_files:
@@ -209,7 +296,7 @@ def autoflat(flat_files, masterflat=None, hdu=0,
             if type(masterflat)==int:
                 gnu = AstroGNU(file,hdu=hdu,dir=os.path.dirname(file))
             else:
-                gnu = AstroGNU(correct_flat(data,masterflat),hdu=hdu,dir=os.path.dirname(file))
+                gnu = AstroGNU(correct_flat(data, masterflat),hdu=hdu, dir=os.path.dirname(file))
             gnu.noisechisel(config=config_nc)
             flat[:,:,i] = (1-gnu.detections) * data
             flat[:,:,i][np.where(flat[:,:,i]==0)]=np.nan
