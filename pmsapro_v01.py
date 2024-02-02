@@ -231,8 +231,6 @@ masterflat[np.isnan(masterflat)] = 1
 
 calList = calibrate(calList, masterflat=masterflat, hdu=hdu, dir=night.calibrated, mask=False)
 
-calList = glob.glob(join(calPath,'*ted.fits'))
-
 # %% 
 ####################################################
 #   (3) Create final mosaic
@@ -294,6 +292,7 @@ def change_config(file, params, length=23):
 
 # Measure corners of the footprint of the images
 # and define center, size and scale of mosaic 
+calList = glob.glob(join(calPath,'*ted.fits'))
 min_ra, max_ra, min_dec, max_dec, scale = get_corners(calList)
 
 scale = np.round(scale, 2)
@@ -509,7 +508,7 @@ radius = np.nanmax([width,height])*scale/(3600*2)
 gaiacat = query_gaia(ra0, dec0, radius)
 sdsscat = query_sdss(ra0, dec0, radius)
 refcat = cross_match(gaiacat, sdsscat)
-
+#%%
 # For each catalog done for scamp, cross match with reference catalog
 # and calculate zero point, and flux calibration
 targetzp = 22.5
@@ -518,18 +517,19 @@ columnid = 'modelMag_g'
 line = lambda x, zp: zp + x
 
 catalogs = glob.glob(join(calPath,'*.cat'))
-for cat in catalogs:
+for cat in catalogs[22:]:
     table = Table(fits.open(cat)['LDAC_OBJECTS'].data)
     table['ALPHA_J2000'].name,table['DELTA_J2000'].name = 'ra','dec'
     merge = cross_match(table, refcat)
     
     # Calculate zero point
-    flux = merge['FLUX_AUTO']
+    flux =  merge['FLUX_AUTO']
     flux_err = merge['FLUXERR_AUTO']
     mag = -2.5*np.log10(flux)
     diff = np.zeros_like(mag)
     for i in range(3):   # Three iterations to remove outliers
-        index = np.isfinite(mag) * np.abs(diff) < 0.2
+        index = np.isfinite(mag) * (flux>0) * (np.abs(diff) < 0.2)
+        mag[index][np.isnan(mag[index])] = 0
         popt, pcov = curve_fit(line, mag[index], merge[columnid][index])    
         diff = merge[columnid] - (zp -2.5*np.log10(flux))
         zp, zperr = popt[0], np.mean(np.sqrt(diff[index]**2))
@@ -551,7 +551,8 @@ for cat in catalogs:
         title += f'zp = {zp:2.2f} +- {zperr:1.2f} magnitudes'
         x = np.linspace(np.nanmin(flux),np.nanmax(flux),300)
         fig,ax = plt.subplots(1,1)
-        ax.plot(flux[index],merge[columnid][index],'r.',label='TSS',alpha=0.3)
+        ax.plot(flux[index],merge[columnid][index],'g.',label='Used for fit',alpha=0.3)
+        ax.plot(flux[~index],merge[columnid][~index],'r.',label='Not used',alpha=0.2)
         ax.plot(x, zp -2.5*np.log10(x),'b-',label='Linear Fit')
         fig.suptitle(title,fontsize=14)
         ax.invert_yaxis()
@@ -560,7 +561,7 @@ for cat in catalogs:
         ax.set_xlabel('FLUX_AUTO$_{TSS}$ [ADUs]')
         ax.set_ylabel(columnid)
         plt.tight_layout()
-        fig.savefig(cat.replace('.cat','_phot.pdf'), format='pdf', dpi=300, bbox_inches='tight')
+        fig.savefig(cat.replace('.cat','_phot.pdf'), format='pdf', dpi=100, bbox_inches='tight')
         plt.close(fig)
 
 #%%
@@ -583,7 +584,7 @@ scampParams = {'ASTREF_CATALOG':    'GAIA-EDR3',
 change_config(scampFile, scampParams, length=22)
 
 scampListFile = join(calPath,'scampList.txt')
-with open(swarpBatch,'w') as f:
+with open(scampListFile,'w') as f:
     for cat in catalogs:
         f.write(f'{cat} \n')
 
@@ -603,13 +604,17 @@ swarptxt = join(calPath,'swarpList.txt')
 with open(swarptxt, 'w') as f:
     for file in finalList:
         data = fits.getdata(file.replace('.head','.fits'))
-        _,med,_ = sigma_clipped_stats(data[data!=0])
+        _,med,_ = sigma_clipped_stats(data[data!=0],sigma=2)
         backgrounds.append(med)
         f.write(file.replace('head','fits')+'\n')
 
 backtext = ','.join([f'{b:.3f} ' for b in backgrounds])
-swarpParams = {'BACK_TYPE': 'MANUAL',
-               'BACK_DEFAULT': backtext}
+swarpParams = { 'SUBTRACT_BACK':     'Y',
+                'BACK_TYPE':         'MANUAL',
+                'BACK_DEFAULT':      backtext,
+                'COMBINE_TYPE':      'WEIGHTED AND CLIPPED',
+                'CLIP_SIGMA':        '3.0',}
+
 change_config(swarpFile, swarpParams)
 
 os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
@@ -621,5 +626,78 @@ os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
 #             polynomials and make final mosaic
 ####################################################
 
-    
+from AstroPipe.classes import AstroGNU, Image
+from AstroPipe.plotting import show
 
+image = Image(mosaicFile, zp=22.5)
+image.obj(ra0,dec0)
+
+resampList = glob.glob(join(calPath,'*sw.fits'))
+
+maskFile = mosaicFile.replace('.fits','_nc.fits')
+if not os.path.isfile(maskFile):
+    gnu = AstroGNU(mosaicFile)
+    gnu.noisechisel(config=config_nc, keep=True)
+else:
+    image.set_mask(fits.getdata(maskFile,'DETECTIONS'))
+
+#%%
+
+
+from astropy.stats import SigmaClip
+from scipy.optimize import curve_fit
+
+def tiltedSky(coords,c,dx,dy,x0,y0):
+    x,y = coords
+    sky = c + dx*(x-x0) + dy*(y-y0)
+    return sky
+
+
+checkplots += ['bkg']
+
+for f in resampList:
+    data = fits.getdata(f)
+
+    framearg = np.argwhere(~np.isnan(data)) 
+
+    x1,x0 = np.max(framearg[:,1]),np.min(framearg[:,1])
+    y1,y0 = np.max(framearg[:,0]),np.min(framearg[:,0])
+
+    offset = np.abs(np.array(data.shape) - np.array(image.data.shape))
+    offx, offy = offset[1], offset[0]
+
+    cutout = np.zeros((y1-y0,x1-x0)) + data[y0:y1,x0:x1] 
+    mask =  image.data.mask[y0:y1,x0:x1] + (cutout==0) + np.isnan(cutout)
+    cutout[mask] = 0    # there is some offset between the mosaic and resampled images. wairning?
+    cutout = np.ma.masked_array(cutout, mask=mask)
+    xx,yy = np.meshgrid(np.arange(x1-x0),np.arange(y1-y0))
+    skyparam = curve_fit(tiltedSky, [xx.flatten()[~cutout.mask.flatten()], 
+                                    yy.flatten()[~cutout.mask.flatten()]],
+                                    cutout.flatten()[~cutout.mask.flatten()],
+                        p0=[np.ma.median(cutout),0,0,cutout.shape[1]/2,cutout.shape[0]/2])
+
+    skymodel = tiltedSky([xx,yy],skyparam[0][0],skyparam[0][1],
+                        skyparam[0][2],skyparam[0][3],skyparam[0][4])
+
+    if 'bkg' in checkplots:
+        fig, (ax1,ax2,ax3) = plt.subplots(1,3,figsize=(12,6), sharex=True, sharey=True)
+        show(cutout,zp=22.5, ax=ax1)
+        show(skymodel,zp=22.5, ax=ax2)
+        show(cutout-skymodel,zp=22.5, ax=ax3)
+        title=f'z={skyparam[0][0]:.2e} + {skyparam[0][1]:.2e}*(x-{skyparam[0][3]:.2e}) + {skyparam[0][2]:.2e}*(y-{skyparam[0][4]:.2e})'
+        fig.suptitle(os.path.basename(f)+'  bkg:'+title,fontsize=12)
+        fig.tight_layout()
+        fig.savefig(f.replace('.fits','_bkg.jpg'), dpi=100, bbox_inches='tight')
+        plt.close(fig)
+    bkgmodel = np.zeros_like(data)
+    bkgmodel[y0:y1,x0:x1] = skymodel
+    fits.PrimaryHDU(data-bkgmodel, image.header).writeto(f.replace('.fits','_bkg.fits'), overwrite=True)
+
+inflist = glob.glob(join(calPath,'*bkg.jpg'))
+merge_pdf(inflist, join(outPath,'skytilted.pdf'))
+
+for f in inflist:
+    os.remove(f)
+
+# Careful with header of files
+# %%

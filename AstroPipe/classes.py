@@ -531,7 +531,7 @@ class AstroGNU():
             hdu=0
             self.temp = True
 
-        if not dir: dir = os.path.basename(self.file)
+        if not dir: dir = os.path.dirname(self.file)
         self.directory = dir
         self.hdu = hdu
         self.name, self.extension = os.path.splitext(self.file)
@@ -539,7 +539,7 @@ class AstroGNU():
         self.loc = loc
         self.method = 'AstroGNU'
 
-    def noisechisel(self,config='', keep=False):
+    def noisechisel(self, config='', keep=False):
         
         self.nc_file  = join(self.directory,self.name+'_nc.fits')
         

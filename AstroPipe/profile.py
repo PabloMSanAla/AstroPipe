@@ -89,7 +89,7 @@ class Profile:
                         'npixels','pa', 'pa_err', 'eps', 'eps_err', 'x', 'y']
         self.units = ['arcsec', 'counts', 'counts','counts', 'counts','na', 
                       'deg', 'deg', 'na', 'na', 'pixel', 'pixel']
-
+        
         if max_radius is not None:
             alpha = np.log10(growth_rate)
             size = np.log10(max_radius)//alpha + 2
