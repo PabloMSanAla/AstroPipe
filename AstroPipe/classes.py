@@ -298,8 +298,8 @@ class Image:
         '''Calculates the morphological parameters of the object
         using a binarize image up to nsigma times the background. '''
 
-        binary = binarize(self.data, nsigma=nsigma)
-        self.pa,self.reff,self.eps = morphologhy(binary)
+        binary = binarize(self.data, nsigma=nsigma, center=(self.x,self.y))
+        self.pa,self.reff,self.eps = morphology(binary)
         self.pix = find_center(self.data, self.pix, )
     
     def set_mask(self,mask):

@@ -114,6 +114,23 @@ class Profile:
     def __call__(self, array, hdu=0, plot=None, save=None):
         '''
         Returns the average photometric radial profile in the array
+        using the parameters of the profile.
+
+        Parameters
+        ----------
+            array : str or array
+                Image data or path to the fits file
+            hdu : int
+                HDU of the fits file. if array is a file
+            plot : str
+                If given it will save the plot in the given path.
+            save : str
+                If given it will save the profile in the given path.
+        
+        Returns
+        -------
+            profile : AstroPipe.sbprofile.Profile
+                Profile object with the radial profile.
         '''
         if array is str: array = fits.getdata(array, hdu)
 
@@ -131,7 +148,9 @@ class Profile:
             flux=None, fluxstd=None, npixels=None,
             pa=None, pastd=None, eps=None, epsstd=None, center=None, 
             bkg=None, bkgstd=None, zp=None, pixscale=None):
-
+        '''
+        Sets the parameters of the profile.
+        '''
         
         if radii is not None: self.rad = radii
         if intensity is not None: self.int = intensity
@@ -154,9 +173,9 @@ class Profile:
             self.y = center[1]*conversion
         elif center is not None: self.x, self.y = center
         
-        if flux is not None: self.flux = flux
-        if fluxstd is not None: self.fluxstd = fluxstd
-        if npixels is not None: self.npixels = npixels
+        if flux is not None: self.flux = flux*conversion
+        if fluxstd is not None: self.fluxstd = fluxstd*conversion
+        if npixels is not None: self.npixels = npixels*conversion
 
         if bkg is not None: self.bkg = bkg
         if bkgstd is not None: self.bkgstd = bkgstd 
@@ -171,6 +190,30 @@ class Profile:
         
     
     def brightness(self, zp=None, bkg=None, pixscale=None,  bkgstd=None):
+        '''Computes the surface brightness of the profile
+        from the intensity and the background. It also computes
+        the upper and lower limits of the profile.
+        
+        Parameters
+        ----------
+            zp : float
+                Zero point of the image [mag]
+            bkg : float
+                Background of the image [int units]
+            pixscale : float
+                Pixel scale of the image [arcsec/pixel]
+            bkgstd : float
+                Standard deviation of the background [int units]
+        
+        Returns
+        -------
+            mu : array
+                surface brightness magnitude of the profile [mag*arcsec^-2]
+            upperr : array
+                Upper limit of the surface brightness magnitude [mag*arcsec^-2]
+            lowerr : array
+                Lower limit of the surface brightness magnitude [mag*arcsec^-2]
+        '''
 
         zp = self.zp if zp is None else zp
         bkg = self.bkg if bkg is None else bkg
@@ -179,26 +222,38 @@ class Profile:
         
         self.mu, self.upperr, self.lowerr = get_surface_brightness(
             self.rad, self.int,  self.intstd, bkg, bkgstd, pixscale, zp)
-    
-    def morphology(self, level):
-        '''returns the morphology of the profile
-            at a surface brightness level'''
-        if not hasattr(self, 'mu'): self.brightness()
-        arg = ut.closest(self.mu, level)
-        pa = np.median(self.pa[arg-2:arg+8])
-        eps = np.median(self.eps[arg-2:arg+8])
-        return self.rad[arg], pa, eps
-    
-    def get_magnitude(self):
-        '''TODO: Create function that computes the
-        asymptotic magnitute of the profile
-        '''
-        return False
-
+        
     def skycenter(self, WCS):
+        ''' Given an WCS object, 
+        it computes the sky coordinates of the center of the profile
+        and sets the ra and dec attributes.
+        
+        Parameters
+        ----------
+            WCS : astropy.wcs.WCS
+                WCS object of the image
+        '''
         self.ra, self.dec = pixel_to_skycoord(self.x, self.y, WCS)
     
     def plot(self, axes=None, color='r', label=None, **kwargs):
+        '''Plots the radial profile of the galaxy.
+        It uses the plot_profile function. 
+        
+        Parameters
+        ----------
+            axes : tuple of matplotlib.axes
+                Axes to plot the profile, eps and pa
+            color : str
+                Color of the profile
+            label : str
+                Label of the profile
+            **kwargs : dict
+                Additional arguments to pass to the plot
+        
+        Returns
+        -------
+            fig : matplotlib.figure
+                Figure with the profile and the parameters'''
         label = self.type if label is None else label
         fig = plot_profile(self.rad*self.pixscale, self.mu, self.pa, self.eps, self.upperr, self.lowerr, 
                            axes=axes, color=color, label=label, **kwargs)
@@ -1075,12 +1130,12 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
 
     skyradii = np.sort([skyradius1,skyradius2])
     aperfactor = np.nanmax([0.01,float(np.round((60 - np.diff(skyradii)) / (np.sum(skyradii)),3))])
-    width = float(np.nanmax([np.diff(skyradii),60]))
+    width = float(np.nanmax(np.diff(skyradii).tolist() + [60]))
 
 
     bkg_aperture = EllipticalAnnulus((center[0],center[1]),
                      (1-aperfactor)*skyradii[0], (1+aperfactor)*skyradii[1], 
-                    (1-0.6*eps)*(1-aperfactor)*skyradii[0], None,
+                    (1-0.6*eps)*(1+aperfactor)*skyradii[0], None,
                     pa)
 
     # Measure the background using the elliptical annulus
@@ -1094,8 +1149,14 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
 
 
     # Renctangular Apertures
-    n_boxes = np.int64(3*np.mean(skyradii)/(width))
-    width_boxes = width*0.8
+    n_boxes = 20 
+    width_boxes =  np.int64(0.9*(np.mean(skyradii)*np.pi/n_boxes))
+    if width_boxes>100:
+        width_boxes=100
+    elif width_boxes<10:
+        width_boxes=20
+        n_boxes =  np.int64(0.7*(skyradii*np.pi/width_boxes))
+
     rect = random_rectangular_boxes(center,-pa, np.mean(skyradii), 0.6*eps, n=n_boxes, wbox=width_boxes)
 
     res_stats = []
@@ -1170,7 +1231,7 @@ Mode  = {aper_bkg:.3e} +- {gauss_fit.params['center'].stderr:.3e}      \
 Sigma = {gauss_fit.params['sigma'].value:.3e} +- {gauss_fit.params['sigma'].stderr:.3e}
 Background = {aper_bkg:.3e} +- {aper_bkgstd:.3e}
 
-Background Meassured in {n_boxes:d} boxes of width {width_boxes:.2f} pixel \
+Background Meassured in {n_boxes:d} boxes of width {width_boxes:d} pixel \
 at a distance of {float(np.nanmax([rad[-1],maxr])):.2f} pixels from the center
 Background = {localsky:.3e} +- {localsky_std:.3e}
 '''

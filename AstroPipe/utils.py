@@ -132,7 +132,7 @@ def where(list_conditions):
         index = np.multiply(index, cond)
     return np.where(index)
 
-def binarize(image, nsigma=1, mask=None):
+def binarize(image, nsigma=1, mask=None, center=None):
     """Binarize an image using a threshold of nsigma*std.
     Statistics are computed with sigma clipped, then the 
     image binarize is dilate to remove noise. 
@@ -145,29 +145,36 @@ def binarize(image, nsigma=1, mask=None):
             Number of sigma to use as threshold.
         mask : array_like, optional
             If use, mask is applied.
+        center: tuple, optional
+            Center of the object to binarize. (x,y)
     
     Returns
     -------
         binary : array_like
             Binarized image.
     """
+    if center is None:
+        y,x = np.array(image.shape)//2
+    else:
+        x,y = np.int64(center)
+    
     mask = None if mask is None else mask
     if hasattr(image, 'mask'): 
         if mask is None: mask = np.ma.getmask(image)
         image = np.ma.getdata(image)
 
-    mean, median, std = sigma_clipped_stats(image, sigma=2.5, mask=mask, maxiters=2)
+    _, median, std = sigma_clipped_stats(image, sigma=2.5, mask=mask, maxiters=2)
     index = image > median+nsigma*std
-
     binarize = np.zeros_like(image)
     binarize[index * ~mask] = 1
+    label = cv2.connectedComponentsWithAlgorithm(binarize.astype(np.uint8), connectivity=8, ltype=cv2.CV_32S, ccltype=cv2.CCL_WU)[1]
+    binarize[label != label[y,x]] = 0
     binarize = cv2.erode(binarize, np.ones((5,5)), iterations=1)
-  
     return binarize
 
 
 
-def morphologhy(binary):
+def morphology(binary):
     moments = cv2.moments(binary)
     
     x2 =(moments['m20']/moments['m00'])-(moments['m10']/moments['m00'])**2

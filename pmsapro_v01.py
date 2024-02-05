@@ -629,7 +629,7 @@ os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
 from AstroPipe.classes import AstroGNU, Image
 from AstroPipe.plotting import show
 
-image = Image(mosaicFile, zp=22.5)
+image = Image(mosaicFile, zp=22.5, hdu=1)
 image.obj(ra0,dec0)
 
 resampList = glob.glob(join(calPath,'*sw.fits'))
@@ -687,17 +687,16 @@ for f in resampList:
         title=f'z={skyparam[0][0]:.2e} + {skyparam[0][1]:.2e}*(x-{skyparam[0][3]:.2e}) + {skyparam[0][2]:.2e}*(y-{skyparam[0][4]:.2e})'
         fig.suptitle(os.path.basename(f)+'  bkg:'+title,fontsize=12)
         fig.tight_layout()
-        fig.savefig(f.replace('.fits','_bkg.jpg'), dpi=100, bbox_inches='tight')
+        fig.savefig(f.replace('.fits','_bkg2.jpg'), dpi=100, bbox_inches='tight')
         plt.close(fig)
     bkgmodel = np.zeros_like(data)
     bkgmodel[y0:y1,x0:x1] = skymodel
     fits.PrimaryHDU(data-bkgmodel, image.header).writeto(f.replace('.fits','_bkg.fits'), overwrite=True)
 
-inflist = glob.glob(join(calPath,'*bkg.jpg'))
-merge_pdf(inflist, join(outPath,'skytilted.pdf'))
-
-for f in inflist:
-    os.remove(f)
+# inflist = glob.glob(join(calPath,'*bkg.jpg'))
+# merge_pdf(inflist, join(outPath,'skytilted.pdf'))
+# for f in inflist:
+#     os.remove(f)
 
 # Careful with header of files
 # %%
