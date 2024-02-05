@@ -1135,7 +1135,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
 
     bkg_aperture = EllipticalAnnulus((center[0],center[1]),
                      (1-aperfactor)*skyradii[0], (1+aperfactor)*skyradii[1], 
-                    (1-0.6*eps)*(1+aperfactor)*skyradii[0], None,
+                    (1-0.6*eps)*(1+aperfactor)*skyradii[1], None,
                     pa)
 
     # Measure the background using the elliptical annulus
@@ -1155,7 +1155,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
         width_boxes=100
     elif width_boxes<10:
         width_boxes=20
-        n_boxes =  np.int64(0.7*(skyradii*np.pi/width_boxes))
+        n_boxes =  np.int64(0.9*(np.mean(skyradii)*np.pi/width_boxes))
 
     rect = random_rectangular_boxes(center,-pa, np.mean(skyradii), 0.6*eps, n=n_boxes, wbox=width_boxes)
 

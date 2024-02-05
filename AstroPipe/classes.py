@@ -398,7 +398,7 @@ class SExtractor:
         if config is not None:
             self.add_config(config)
 
-        if not sexpath: sexpath = 'sex'
+        if sexpath is None: sexpath = 'sex'
         self.sexpath = sexpath
 
     def add_params(self, p_list):

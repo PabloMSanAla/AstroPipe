@@ -205,9 +205,9 @@ def sexmask(IMG, folders, fwhm=None, plot=False, temp=False):
                                     'PIXEL_SCALE' : IMG.pixel_scale,
                                     'DETECT_THRESH': 1.3,   # 1.5
                                     "DEBLEND_MINCONT": 0.005,
-                                    "DEBLEND_NTHRESH": back_size,
+                                    "DEBLEND_NTHRESH": 32,
                                     'PHOT_FLUXFRAC': 0.9, 
-                                    'BACK_SIZE':  120,       # 64
+                                    'BACK_SIZE':  back_size,       # 64
                                     'MEMORY_OBJSTACK': 10000,           
                                     'MEMORY_PIXSTACK': 1000000,     
                                     'MEMORY_BUFSIZE': 51200}

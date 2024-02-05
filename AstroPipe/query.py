@@ -11,10 +11,15 @@ from datetime import datetime
 from scipy.interpolate import griddata
 
 from astropy.io import fits 
-from astropy.table import Table
+from astropy.table import Table, hstack
 from astroquery.sdss import SDSS
+from astroquery.gaia import Gaia
 from astropy import coordinates as coords
+
 from astropy.wcs import WCS, utils
+from astropy import units as u
+
+
 
 
 def sdss_script_mosaic(url):
@@ -747,4 +752,108 @@ def mosaicPSF(ra, dec, name, outdir=None, size=0.1, scale=0.396, band='i', verbo
 
 
     
+def cross_match(catalog1, catalog2, maxsep = 2*u.arcsec):
+    '''
+    Given two astropy tables, cross match them and return the result.
+    Each table must have ra and dec columns.
+
+    Parameters
+    ----------
+        catalog1 : astropy.table.Table
+            First catalog. With ra and dec columns in deg.
+        catalog2 : astropy.table.Table
+            Second catalog. With ra and dec columns in deg.
+        maxsep : astropy.units.Quantity
+            Maximum separation to consider a match.
     
+    Returns
+    -------
+        astropy.table.Table
+            Cross matched catalog.
+    '''
+    coords1 = SkyCoord(ra=catalog1['ra'], dec=catalog1['dec'], unit=(u.deg, u.deg), frame='icrs')
+    coords2 = SkyCoord(ra=catalog2['ra'], dec=catalog2['dec'], unit=(u.deg, u.deg), frame='icrs')
+    idx, d2d, _ = coords1.match_to_catalog_sky(coords2)
+    sep_constrain = d2d < maxsep
+    match1 = catalog1[sep_constrain]
+    match2 = catalog2[[idx[sep_constrain]]]
+    merge = hstack([match1,match2])
+    merge['ra_1'].name = 'ra'
+    merge['dec_1'].name = 'dec'
+    merge.remove_columns(['ra_2','dec_2'])
+    return merge
+
+def query_gaia(ra, dec, radius, maglim=(5,25)):
+    """
+    Given a position and a radius, query Gaia DR3 for all sources in the field.
+
+    Parameters
+    ----------
+        ra : float
+            Right ascension in degrees.
+        dec : float
+            Declination in degrees.
+        radius : float
+            Radius in degrees.
+        maglim : tuple, optional
+            Magnitude limits to filter the query. The default is (5,25).
+    
+    Returns
+    -------
+        astropy.table.Table
+            Gaia catalog.
+    """
+    mag_low, mag_high = maglim
+    # Convert input coordinates to SkyCoord
+    coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+    # Query Gaia based on coordinates and radius
+    query = (
+        f"SELECT ra,dec,phot_g_mean_mag FROM gaiadr3.gaia_source "
+        f"WHERE CONTAINS(POINT('ICRS', gaiadr3.gaia_source.ra, gaiadr3.gaia_source.dec), "
+        f"CIRCLE('ICRS', {coords.ra.deg}, {coords.dec.deg}, {radius})) = 1 "
+        f"AND gaiadr3.gaia_source.phot_g_mean_mag BETWEEN {mag_low} AND {mag_high}"
+    )
+    job = Gaia.launch_job_async(query)
+    result_table = job.get_results()
+    return result_table
+
+def query_sdss(ra, dec, radius, maglim=(5,25), fields=None):
+    '''
+    Given a position and a radius, query SDSS DR12 for all sources in the field.
+    You can set the fields to query, otherwise it will query the default fields.
+    https://skyserver.sdss.org/dr12/en/help/browser/browser.aspx?cmd=description+PhotoObjAll+U#&&history=description+PhotoObjAll+U
+
+    TODO: maybe faster with SDSS.query_sql(query)?
+
+    Parameters
+    ----------
+        ra : float
+            Right ascension in degrees.
+        dec : float
+            Declination in degrees.
+        radius : float
+            Radius in degrees.
+        maglim : tuple, optional
+            Magnitude limits to filter the query. The default is (5,25).
+        fields : list, optional
+            Fields to query. The default is None.
+    
+    Returns
+    -------
+        astropy.table.Table
+            SDSS catalog.
+    '''
+    if fields is None:
+        photoobj_fields = ['ra','dec','modelMag_u', 'modelMag_g', 'modelMag_r', 'modelMag_i', 'modelMag_z', 
+                              'extinction_u', 'extinction_g', 'extinction_r', 'extinction_i', 'extinction_z', 
+                              'deVAB_u', 'deVAB_g', 'deVAB_r', 'deVAB_i', 'deVAB_z', 
+                              'mCr4_u', 'mCr4_g', 'mCr4_r', 'mCr4_i', 'mCr4_z', 
+                              'petroR50_u', 'petroR50_g', 'petroR50_r', 'petroR50_i', 'petroR50_z', 
+                              'petroR90_u', 'petroR90_g', 'petroR90_r', 'petroR90_i', 'petroR90_z']
+    else:
+        photoobj_fields = fields
+    mag_low, mag_high = maglim
+    coords = coords.SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+    tab = SDSS.query_region(coords, radius=radius*u.deg, photoobj_fields=photoobj_fields, timeout=3600)
+    tab = tab[(tab['modelMag_g']>mag_low) * (tab['modelMag_g']<mag_high)]
+    return tab

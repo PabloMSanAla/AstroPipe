@@ -175,6 +175,24 @@ def binarize(image, nsigma=1, mask=None, center=None):
 
 
 def morphology(binary):
+    ''' Gets the morphological parameters of a 
+    binary image using the image moments. 
+    
+    Parameters
+    ----------
+        binary : array_like
+            Binary image.
+    
+    Returns
+    -------
+        angle : float 
+            Angle of the object in degrees [x to y]
+        major : float
+            Major axis of the object
+        eps : float
+            Ellipticity of the object [1-b/a]
+    '''
+
     moments = cv2.moments(binary)
     
     x2 =(moments['m20']/moments['m00'])-(moments['m10']/moments['m00'])**2
