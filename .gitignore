@@ -78,4 +78,5 @@ Tests/*
 gui/*
 gui-Andreu/*
 venv/*
+local/*
 
