@@ -115,7 +115,7 @@ def sdss_mosaic(ra, dec, name, outdir, size=0.3, scale=0.396, band='i', sigma=Tr
         bool
             True if the mosaic was downloaded successfully.
     """
-
+    
     url = f'https://dr12.sdss.org/mosaics/script?onlyprimary=True&pixelscale={scale}&ra={ra}&filters={band}&dec={dec}&size={size}'
     if verbose: print(url)
 
@@ -771,8 +771,8 @@ def cross_match(catalog1, catalog2, maxsep = 2*u.arcsec):
         astropy.table.Table
             Cross matched catalog.
     '''
-    coords1 = SkyCoord(ra=catalog1['ra'], dec=catalog1['dec'], unit=(u.deg, u.deg), frame='icrs')
-    coords2 = SkyCoord(ra=catalog2['ra'], dec=catalog2['dec'], unit=(u.deg, u.deg), frame='icrs')
+    coords1 = coords.SkyCoord(ra=catalog1['ra'], dec=catalog1['dec'], unit=(u.deg, u.deg), frame='icrs')
+    coords2 = coords.SkyCoord(ra=catalog2['ra'], dec=catalog2['dec'], unit=(u.deg, u.deg), frame='icrs')
     idx, d2d, _ = coords1.match_to_catalog_sky(coords2)
     sep_constrain = d2d < maxsep
     match1 = catalog1[sep_constrain]
@@ -805,12 +805,13 @@ def query_gaia(ra, dec, radius, maglim=(5,25)):
     """
     mag_low, mag_high = maglim
     # Convert input coordinates to SkyCoord
-    coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+    coords1 = coords.SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+    #hello
     # Query Gaia based on coordinates and radius
     query = (
         f"SELECT ra,dec,phot_g_mean_mag FROM gaiadr3.gaia_source "
         f"WHERE CONTAINS(POINT('ICRS', gaiadr3.gaia_source.ra, gaiadr3.gaia_source.dec), "
-        f"CIRCLE('ICRS', {coords.ra.deg}, {coords.dec.deg}, {radius})) = 1 "
+        f"CIRCLE('ICRS', {coords1.ra.deg}, {coords1.dec.deg}, {radius})) = 1 "
         f"AND gaiadr3.gaia_source.phot_g_mean_mag BETWEEN {mag_low} AND {mag_high}"
     )
     job = Gaia.launch_job_async(query)
@@ -853,7 +854,7 @@ def query_sdss(ra, dec, radius, maglim=(5,25), fields=None):
     else:
         photoobj_fields = fields
     mag_low, mag_high = maglim
-    coords = coords.SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
-    tab = SDSS.query_region(coords, radius=radius*u.deg, photoobj_fields=photoobj_fields, timeout=3600)
+    coords1 = coords.SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+    tab = SDSS.query_region(coords1, radius=radius*u.deg, photoobj_fields=photoobj_fields, timeout=3600)
     tab = tab[(tab['modelMag_g']>mag_low) * (tab['modelMag_g']<mag_high)]
     return tab

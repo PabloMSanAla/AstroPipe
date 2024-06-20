@@ -56,8 +56,7 @@ def mag_limit(std, Zp=22.5, omega=10, scale=0.33, n=3):
 def check_print(message):
     print(colored('AstroPipe', 'green')+': '+ message)
 
-def redshift_to_kpc(redshift,H0=70* u.km / u.s / u.Mpc, 
-                             Tcmb0 = 2.725* u.K, Om0=0.3):
+def redshift_to_kpc(redshift,H0=70,Tcmb0 = 2.725, Om0=0.3):
     '''Function that given a redshift returns the physical distance
     in kpc. It uses the cosmology from astropy.cosmology.
     
@@ -66,9 +65,9 @@ def redshift_to_kpc(redshift,H0=70* u.km / u.s / u.Mpc,
         redshift : float, or array
             Redshift of the object.
         H0 : float, optional
-            Hubble constant. The default is 70.
+            Hubble constant. The default is 70. [km/s/Mpc]
         Tcmb0 : float, optional
-            CMB temperature. The default is 2.725.
+            CMB temperature. The default is 2.725. [K]
         Om0 : float, optional
             Matter density. The default is 0.3.
     
@@ -77,7 +76,7 @@ def redshift_to_kpc(redshift,H0=70* u.km / u.s / u.Mpc,
         distance : float
             Physical distance in kpc.
     '''
-    cosmo = FlatLambdaCDM(H0=H0 , Tcmb0=Tcmb0 , Om0=Om0)
+    cosmo = FlatLambdaCDM(H0=H0* u.km / u.s / u.Mpc, Tcmb0=Tcmb0* u.K , Om0=Om0)
     return (cosmo.luminosity_distance(redshift) * 1000 * u.kpc/u.Mpc).value
 
 def kpc_to_arcsec(kpc, distance):
@@ -164,13 +163,15 @@ def binarize(image, nsigma=1, mask=None, center=None):
         image = np.ma.getdata(image)
 
     _, median, std = sigma_clipped_stats(image, sigma=2.5, mask=mask, maxiters=2)
-    index = image > median+nsigma*std
-    binarize = np.zeros_like(image)
-    binarize[index * ~mask] = 1
-    label = cv2.connectedComponentsWithAlgorithm(binarize.astype(np.uint8), connectivity=8, ltype=cv2.CV_32S, ccltype=cv2.CCL_WU)[1]
-    binarize[label != label[y,x]] = 0
-    binarize = cv2.erode(binarize, np.ones((5,5)), iterations=1)
-    return binarize
+    smooth = fabada(image, std**2)
+    _, median, std = sigma_clipped_stats(image, sigma=2.5, mask=mask, maxiters=2)
+    index = smooth > median+nsigma*std
+    binarized = np.zeros_like(image)
+    binarized[index * ~mask] = 1
+    label = cv2.connectedComponentsWithAlgorithm(binarized.astype(np.uint8), connectivity=8, ltype=cv2.CV_32S, ccltype=cv2.CCL_WU)[1]
+    binarized[label != label[y,x]] = 0
+    binarized = cv2.erode(binarized, np.ones((5,5)), iterations=1)
+    return binarized
 
 
 
@@ -188,10 +189,10 @@ def morphology(binary):
         angle : float 
             Angle of the object in degrees [x to y]
         major : float
-            Major axis of the object
+            Major axis of the object in pixels
         eps : float
             Ellipticity of the object [1-b/a]
-    '''
+    # '''
 
     moments = cv2.moments(binary)
     
@@ -205,7 +206,14 @@ def morphology(binary):
     angle = 0.5*np.arctan2(2*xy,x2-y2)*180/np.pi
     eps = 1 - minor/major
 
-    return angle,major,eps
+    arguments = np.argwhere(binary)
+    xdist = np.nanmax(arguments[:,1]) -  np.nanmin(arguments[:,1])
+    ydist = np.nanmax(arguments[:,0]) -  np.nanmin(arguments[:,0]) 
+    sma_x = xdist / np.cos(angle*np.pi/180)
+    sma_y = ydist / np.sin(angle*np.pi/180)
+    sma = np.nanmax([sma_x,sma_y])/2
+
+    return angle,sma,eps
 
 def rebin(arr, new_shape):
     shape = (new_shape[0], arr.shape[0] // new_shape[0],
@@ -295,17 +303,84 @@ def cutout(file, center, width, hdu=0, mode='image', out=None):
         raise ValueError('mode must be image or wcs')
 
     
-    cropped, header = crop(data, header, center, width)
+    cropped, header, coords = crop(data, header, center, width)
 
     if out is None: out = file.replace('.fits','_crop.fits')
     
+    header['COMMENT'] = "= Cropped fits file ({}).".format(datetime.date.today())
+    header['CROP'] = (f'{coords[1][0]}:{coords[1][1]},{coords[0][0]}:{coords[0][1]}',
+                          'Range of pixels used for this cutout [y0:y1,x0:x1]')
     fits.PrimaryHDU(cropped, header).writeto(out,overwrite=True)
 
     return os.path.isfile(out)
 
+def averageBinning(data, binning=2):
+    """
+    Bin pixels in a 2D array using the average of the values of the bin
+    Parameters:
+    - data: 2D numpy array of data values
+    - binning: Size of the bins (integer). Default = 2
+
+    Returns:
+    - binned_data: 2D numpy array of binned data values
+    - binned_mask: 2D numpy array of updated mask values after binning
+    """
+
+    if hasattr(data,'mask'):
+        mask = data.mask
+    else:
+        mask = np.zeros_like(data)
+    # Determine the shape of the binned data
+    new_shape = (data.shape[0] // binning, data.shape[1] // binning)
+
+    # Reshape the data and mask arrays into 2D arrays of equal-sized bins
+    binned_data = data[:new_shape[0] * binning, :new_shape[1] * binning].reshape(new_shape[0], binning, new_shape[1], binning).mean(axis=(1, 3))
+    binned_mask = mask[:new_shape[0] * binning, :new_shape[1] * binning].reshape(new_shape[0], binning, new_shape[1], binning).any(axis=(1, 3))
+
+    binned = np.ma.masked_array(binned_data,mask=binned_mask)
+    return binned
+
+def sumBinning(data, binning=2):
+    """
+    Bin pixels in a 2D array while preserving total flux, and update the mask accordingly.
+
+    Parameters:
+    - data: 2D numpy array of data values
+    - binning: Size of the bins (integer). Default = 2
+
+    Returns:
+    - binned_data: 2D numpy array of binned data values
+    - binned_mask: 2D numpy array of updated mask values after binning
+    """
+
+    if hasattr(data,'mask'):
+        mask = data.mask
+    else:
+        mask = np.zeros_like(data)
+    # Determine the shape of the binned data
+    new_shape = (data.shape[0] // binning, data.shape[1] // binning)
+
+    # Reshape the data and mask arrays into 2D arrays of equal-sized bins
+    binned_data = data[:new_shape[0] * binning, :new_shape[1] * binning].reshape(new_shape[0], binning, new_shape[1], binning).mean(axis=(1, 3))
+    binned_mask = mask[:new_shape[0] * binning, :new_shape[1] * binning].reshape(new_shape[0], binning, new_shape[1], binning).any(axis=(1, 3))
+
+    binned = np.ma.masked_array(binned_data,mask=binned_mask)
+    return binned
+
 def get_pixel_scale(header):
     '''
     Funtion that given a header returns the pixel scale in arcsec/pixel.
+
+    PARAMETERS
+    ----------
+        header: astropy.io.fits.header.Header
+            astropy header class of the image
+    
+    RETURNS
+    -------
+        scale: float
+            median pixel scale of the pixel in arcseconds
+
     '''
     wcs = WCS(header)
     scale = np.abs(np.mean(utils.proj_plane_pixel_scales(wcs))*3600)
@@ -485,6 +560,30 @@ def find_center(data, center, width=30):
     y += np.int32(center[1]-width)
     return x,y
 
+def average_bin(x,y,bins):
+    '''Average a variable y in bins of x
+    
+    Parameters
+    ----------
+        x : array
+            x-axis values.
+        y : array
+            y-axis values.
+        bins : array
+            Bins to use.
+    
+    Returns
+    -------
+        ybins : array
+            Averaged y values in bins of x.
+    '''
+    x = np.zeros_like(x) + np.array(x)
+    y = np.zeros_like(y) + np.array(y)
+    xbins = np.digitize(x,bins)
+    ybins = np.zeros(len(bins)-1)
+    for i in range(1,len(bins)):
+        ybins[i-1] = np.nanmean(y[xbins==i])
+    return ybins
 
 
 def limits(x,y,n=30):
@@ -693,11 +792,11 @@ def mass_iband_offset(mass, rms=0.17):
 
 def magnitude_to_mass(magnitude, distance, mass_to_light=0.6, absmagsolar = 6.02):
     '''
-    Function that converts magnitude to mass in solar masses.
+    Function that converts apparent magnitude to mass in solar masses.
     Parameters:
     ----------
         magnitude : float
-                Magnitude of the galaxy.
+                Apparent magnitude of the galaxy.
         distance : float
                 Distance to the galaxy in Mpc.
         mass_to_ratio : float

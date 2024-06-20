@@ -180,7 +180,7 @@ def sexmask(IMG, folders, fwhm=None, plot=False, temp=False):
 
 
     if not hasattr(folders,'mask'): folders.set_mask(os.path.join(folders.out,os.path.basename(IMG.name).split(IMG.extension)[0]+'_mask.fits'))
-    if not hasattr(IMG,'bkg'): bkg = IMG.bkg
+    if hasattr(IMG,'bkg'): bkg = IMG.bkg
     else: bkg = 0
 
     back_size = 8*fwhm**2 if fwhm else 120

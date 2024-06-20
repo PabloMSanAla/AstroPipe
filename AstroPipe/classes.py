@@ -21,11 +21,11 @@ from lmfit.models import GaussianModel
 
 import copy
 
-# from ctypes import c_float, c_double
-# from mtolib import _ctype_classes as ct
-# from mtolib.tree_filtering import filter_tree, get_c_significant_nodes, init_double_filtering
-# from mtolib import postprocessing
-# import mtolib.main as mto
+from ctypes import c_float, c_double
+from mtolib import _ctype_classes as ct
+from mtolib.tree_filtering import filter_tree, get_c_significant_nodes, init_double_filtering
+from mtolib import postprocessing
+import mtolib.main as mto
 
 from .plotting import noise_hist, make_cmap, show
 from .utils import *
@@ -92,8 +92,7 @@ class Image:
         )
         self.pix = np.array([np.float64(self.pix[0]),
                             np.float64(self.pix[1])])
-        self.x = np.int64(self.pix[0])
-        self.y = np.int64(self.pix[1])
+        self.x,self.y = np.int64(self.pix)
 
     def obj_id(self, mask):
         '''
@@ -232,7 +231,7 @@ class Image:
         profile.brightness()
         return profile
 
-    def isophotal_photometry(self, max_r=None, plot=None, save=None, 
+    def isophotal_photometry(self, max_r=None, plot=None, save=None, growth_rate=1.03,
                             fix_center=True, fix_pa=False, fix_eps=False):
         '''Method to calculate the radial profile of the object
         fitting the morphological parameters of the object for 
@@ -261,7 +260,7 @@ class Image:
                 Radial profile of the object.'''
         
         profile = isophotal_photometry(self.data, self.pix, self.pa, self.eps, self.reff,
-                                    max_r=max_r, plot=plot, save=save,
+                                    max_r=max_r, plot=plot, save=save, growth_rate=growth_rate,
                                     fix_center=fix_center, fix_pa=fix_pa, fix_eps=fix_eps)
         
         profile.set_params(bkg=self.bkg, bkgstd=self.bkgstd, 
@@ -281,7 +280,7 @@ class Image:
         if hasattr(self,'x'):
             ax.set_xlim([self.x-width,self.x+width])
             ax.set_ylim([self.y-width,self.y+width])
-        ax.text(0.02, 1, self.name, horizontalalignment='left',
+        ax.text(0.02, 1, self.name.replace('_','\_'), horizontalalignment='left',
                 verticalalignment='bottom', transform=ax.transAxes, fontweight='bold',fontsize='large')
         plt.tight_layout()
         return ax
@@ -300,7 +299,10 @@ class Image:
 
         binary = binarize(self.data, nsigma=nsigma, center=(self.x,self.y))
         self.pa,self.reff,self.eps = morphology(binary)
-        self.pix = find_center(self.data, self.pix, )
+        radcent = np.int64(self.reff/4) if  np.int64(self.reff/4)>20 and np.int64(self.reff/4)<80 else 20
+        self.pix = find_center(self.data, self.pix, radcent)
+        self.x,self.y = np.int64(self.pix)
+
     
     def set_mask(self,mask):
         self.data = ma.masked_array(ma.getdata(self.data), mask=mask)
@@ -434,6 +436,9 @@ class SExtractor:
         self.cat = Table.read(file, format='ascii.sextractor')
 
 class MTObjects():
+    '''API of the MTObjects program by Caroline Haigh.
+    https://github.com/CarolineHaigh/mtobjects
+    '''
     def __init__(self):
 
         self.out = 'out.fits'
@@ -595,23 +600,29 @@ class Directories():
     '''Class to help keep track where all the products of the pipeline 
      is being save. It generates automatic names for mask, and profiles
     '''
-    def __init__(self, name, path=None):
+    def __init__(self, name, path=None, create=True):
         '''Once initialize it creates the structures of directories where 
          the products will be save.'''
         if not path: path = os.path.dirname(name)
         self.out = join(path,'AstroPipe_'+name)
-        if not os.path.exists(self.out):
+        if not os.path.exists(self.out) and create:
              os.mkdir(self.out)
         self.temp = join(self.out,'temp_'+name)
-        if not os.path.exists(self.temp):
+        if not os.path.exists(self.temp) and create:
              os.mkdir(self.temp)
         self.mask = join(self.out, f'{name}_mask.fits')
         self.profile = join(self.out, f'{name}_profile.fits')
+
+    def create(self):
+        '''Create the out and temp directories'''
+        if not os.path.exists(self.out): os.mkdir(self.out)
+        if not os.path.exists(self.temp): os.mkdir(self.temp)
+
     def set_regions(self,path):
         self.regions = path
-    def set_mask(self,file):
+    def set_mask(self, file):
         self.mask = file
-    def set_profile(self,file):
+    def set_profile(self, file):
         self.profile = file
         
 class log_class:

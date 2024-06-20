@@ -273,7 +273,8 @@ def surface_figure(image, profile, out=None, mumax=None, radmax=None, **kwargs):
         fig : matplotlib.figure.Figure
             Figure object.
     '''
-
+    plt.rcParams["text.usetex"]= True
+    
     fig = plt.figure(figsize=(11.5,4))
     axim = plt.subplot2grid((5,3),(0,0),rowspan=5)
     axmask = plt.subplot2grid((5,3),(0,1),rowspan=5, sharex=axim)
@@ -304,7 +305,7 @@ def surface_figure(image, profile, out=None, mumax=None, radmax=None, **kwargs):
     axmask.imshow(magnitude, **specs)
     axmask.imshow(image.data.mask, origin='lower',cmap=mask_cmap(alpha=0.5), extent=extent)
     axmask = plot_ellipses(profile.rad*image.pixel_scale, profile.pa, profile.eps, 
-                        np.array((profile.x-image.x, profile.y-image.y)), 
+                        np.array((profile.x-image.x, profile.y-image.y))*image.pixel_scale, 
                         ax=axmask, step=5, alpha=0.6, max_r=radmax*image.pixel_scale)
 
     fig = profile.plot(axes=(axmu,axpa,axeps))
@@ -317,6 +318,7 @@ def surface_figure(image, profile, out=None, mumax=None, radmax=None, **kwargs):
     
     
     for ax in [axmu,axeps,axpa]:
+        ax.set_xlim(np.array([-0.08,1.1])*radmax*image.pixel_scale)
         ax.yaxis.set_label_position("right")
         ax.yaxis.set_ticks_position("right")
         ax.yaxis.set_ticks_position('both')
@@ -324,18 +326,28 @@ def surface_figure(image, profile, out=None, mumax=None, radmax=None, **kwargs):
 
     axim.set_ylabel('Distance [arcsec]',fontsize=14)
     axmask.set_yticklabels([])
-    axim.text(1.0, 1.0, image.name, va='bottom', ha='right',
-            transform=axim.transAxes, fontweight='bold')
+    axim.text(1.0, 1.02, image.name.replace('_','-'), va='bottom', ha='right',
+            transform=axim.transAxes, fontweight='bold', fontsize=16)
 
-    # Colorbar inside profile axes
-    cbarax = axmu.inset_axes([0.9*radmax*image.pixel_scale, specs['vmin'], 
-                            0.05*radmax*image.pixel_scale, specs['vmax']-specs['vmin']],
-                transform=axmu.transData)
-    cbar = fig.colorbar(im, cax=cbarax)
-    cbarax.axis('off')
-    cbarax.invert_yaxis()
-    axmu.set_ylim([mumax*1.15,0.95*profile.mu[np.isfinite(profile.mu)][0]])
-    axmu.set_xlim(np.array([-0.05,1.1])*radmax*image.pixel_scale)
+    # # Colorbar inside profile axes
+    # cbarax = axmu.inset_axes([0.9*radmax*image.pixel_scale, specs['vmin'], 
+    #                         0.05*radmax*image.pixel_scale, specs['vmax']-specs['vmin']],
+    #             transform=axmu.transData)
+    # cbar = fig.colorbar(im, cax=cbarax)
+    # cbarax.axis('off')
+    # cbarax.invert_yaxis()
+    # axmu.set_ylim([mumax*1.15,0.95*profile.mu[np.isfinite(profile.mu)][0]])
+    # axmu.set_xlim(np.array([-0.05,1.1])*radmax*image.pixel_scale)
+
+    # Colorbar in top of the mask image
+    axins = axmask.inset_axes([0,1.01, 
+                           1,0.04])
+    cbar = fig.colorbar(im, cax=axins, orientation='horizontal')#, location='top', pad=0.1)
+    cbar.ax.xaxis.set_ticks_position('top')
+    cbar.ax.xaxis.set_label_position('top')
+    cbar.ax.tick_params(labelsize=10)
+    cbar.set_label('$\mu$ [mag arcsec$^{-2}$]',fontsize=14,labelpad=10)
+
 
     fig.subplots_adjust(top=0.915, bottom=0.09,
                         left=0.045, right=0.95,
@@ -396,7 +408,7 @@ def plot_ellipses(radius, pa, eps, center, ax=None, color='black', step=1, max_r
     if not ax: ax = plt.subplot(111)
     if not max_r: max_r = np.nanmax(radius)
     for i in range(len(radius)):
-        if i%step==0 and radius[i]<max_r:
+        if i%step==0 and radius[i]<=max_r:
             ellipse_patch = patches.Ellipse(center[:,i],
                 2*radius[i],2*(radius[i] * (1 - eps[i])),
                 pa[i], color=color, fill=False, **kwargs)
@@ -524,7 +536,7 @@ def interactive_mask_modify(Image, out=None, scaling = 0.8, screendpi = 100, **k
     size = 5
     size_box = TextBox(size_ax, 'size', initial=str(size))
 
-    newmaskname = f'{galaxy}_newmask.fits'
+    newmaskname = join(Image.directory, f'{galaxy}_newmask.fits')
     save_button = Button(save_ax, 'Save')
 
     new_mask = np.zeros_like(Image.data.mask)

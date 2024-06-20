@@ -6,9 +6,10 @@ import os
 from os.path import join
 from astropy.stats import SigmaClip
 import astroalign
+import subprocess
 
 from .classes import AstroGNU
-
+import multiprocessing
 
 class astrometry():
     '''
@@ -266,6 +267,80 @@ def correct_flat(data,flat,mask=True):
         corrected[np.where(corrected<np.nanpercentile(data[np.where(data<0)],10))] = np.nan
     return corrected
 
+def noise_parrallel(filelist, config_nc='', ncpu=8, out=''):
+    text = ''
+    for i in filelist:
+        text = text + f'" astnoisechisel {i} {config_nc} -o{join(out,os.path.basename(i).replace(".fits","_detected.fits"))}"\n '
+    
+    cmd = f'''
+#! /bin/bash
+
+commands=(
+{text}
+)
+
+parallel --jobs {ncpu}'''+ ' ::: "${commands[@]}"'
+
+    return cmd
+
+
+
+def autoflat_parallel(flat_files, masterflat=None, config='', hdu=0, ncpu=8, divider=1):
+    """Creates an autoflat given a list of science images. 
+    We first run noisechisel in parallel to mask sources in the images.
+    Then we combine the images in chunks to reduce memory usage.
+    """
+    
+    # Create bash file to run noisechisel in paraller
+    out = join(os.path.dirname(flat_files[0]),'noisechisel')
+    cmd = noise_parrallel(flat_files, config_nc=config, N=ncpu, out=out)
+    noisefile = join(os.path.dirname(flat_files[0]),'noisechisel.sh')
+    with open(noisefile,'w') as f:
+        f.write(cmd)
+    cmd = ['bash', noisefile]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    # Start building the flat in chunks to keep memory usage low
+    
+    sc_norm = SigmaClip(sigma=2,maxiters=3)
+    sc_comb = SigmaClip(sigma=3,maxiters=3)
+
+    if masterflat is None:
+        reference = flat_files[np.random.randint(0,len(flat_files),2)[0]]
+        reference_data = fits.getdata(reference,hdu)
+        detections = fits.getdata(join(out,os.path.basename(reference).replace('.fits','_detected.fits')),1)
+        reference_data =  (1-detections) * reference_data
+        reference_data[np.where(reference_data==0)] = np.nan
+        reference_data /= np.ma.mean(sc_norm(reference_data))
+        masterflat = 1
+    else:
+        reference_data = masterflat
+
+    shape = reference_data.shape
+    flat = np.zeros(shape)
+    xdiv = np.linspace(0,reference_data.shape[1],divider+1).astype(np.int32)
+
+    for i in range(1, divider+1):
+        tempshape = reference_data[:,xdiv[i-1]:xdiv[i]].shape + (len(flat_files),)
+        regionflat = np.zeros(tempshape) 
+        k=0
+        for file in flat_files:
+            try:
+                regionflat[:,:,k] = fits.getdata(file,hdu=hdu)[:,xdiv[i-1]:xdiv[i]] * (
+                            1-fits.getdata(join(out,os.path.basename(file).replace('.fits','_detected.fits')),2)[:,xdiv[i-1]:xdiv[i]])
+                regionflat[:,:,k][np.where(regionflat[:,:,i]==0)]=np.nan
+                norm = np.ma.mean(sc_norm(regionflat[:,:,i] / reference_data[:,xdiv[i-1]:xdiv[i]]))
+                regionflat[:,:,k] = regionflat[:,:,i]/norm
+            except:
+                print(f'Error in {file}')
+            k+=1
+        regionflat = np.ma.mean(sc_comb(regionflat, axis=2),axis=2)
+        regionflat[np.where(regionflat.mask)]=np.nan
+        flat[:,xdiv[i-1]:xdiv[i]] = regionflat.data
+    
+    return flat
+    
+
 def autoflat(flat_files, masterflat=None, hdu=0,
              config_nc = '-Z30,30 -t0.25 --interpnumngb=9 -d0.8', dtype=np.float32):
 
@@ -288,7 +363,7 @@ def autoflat(flat_files, masterflat=None, hdu=0,
         reference_data = masterflat
 
     flat = np.zeros(reference_data.shape + (len(flat_files),), dtype=dtype)
-
+    
     i=0
     for file in flat_files:
         try:

@@ -4,8 +4,9 @@ from AstroPipe.calibration import structure
 from AstroPipe.calibration import *
 # calibrate, save_fits, autoflat, calibrate_night, stack, darkstack
 from AstroPipe.classes import AstroGNU
-from AstroPipe.utils import get_pixel_scale, merge_pdf
+from AstroPipe.utils import get_pixel_scale, merge_pdf, mag_limit
 from AstroPipe.plotting import show
+import subprocess
 
 import os
 import pandas as pd
@@ -23,11 +24,35 @@ warnings.filterwarnings("ignore")
 
 from PyPDF2 import PdfReader, PdfMerger 
 
+def create_log(path, extension='.fits'):
+    table = {'frame':[],'root':[],'type':[],'object':[],'ra':[],'dec':[],'exptime':[],
+             'airmass':[],'filter':[],'date':[],'temp':[],'gain':[],'offset':[]}
+    for root, _, files in os.walk(path):
+        for file in files:
+            if file.endswith(extension):
+                header = fits.getheader(join(root,file))
+                table['frame'].append(file)
+                table['root'].append(root)
+                table['object'].append(header['OBJECT'].replace(' ','') if 'OBJECT' in header else 'None')
+                table['type'].append(header['IMAGETYP'] if 'IMAGETYP' in header else 'None')
+                table['ra'].append(header['RA'] if 'RA' in header else 'None')
+                table['dec'].append(header['DEC'] if 'DEC' in header else 'None')
+                table['exptime'].append(header['EXPTIME'] if 'EXPTIME' in header else 'None')
+                table['airmass'].append(header['AIRMASS'] if 'AIRMASS' in header else 'None')
+                table['filter'].append(header['FILTER'] if 'FILTER' in header else 'None')
+                table['date'].append(header['DATE-OBS'] if 'DATE-OBS' in header else 'None')
+                table['temp'].append(header['CCD-TEMP'] if 'CCD-TEMP' in header else 'None')
+                table['gain'].append(header['GAIN'] if 'GAIN' in header else 'None')
+                table['offset'].append(header['OFFSET'] if 'OFFSET' in header else 'None')
+    return pd.DataFrame(table)
 
-path = '/Volumes/IACDrive/AstroFotos/AstroPipe_Test'
+
+
+# path = '/Volumes/IACDrive/AstroFotos/AstroPipe_Test'
+path = '/Volumes/IACDrive/AstroFotos/2024'
 subfolders = [ f.path for f in os.scandir(path) if f.is_dir() ]
 
-outPath = os.path.join(path,'Processing')
+outPath = '/Volumes/IACDrive/AstroFotos/Procesing/2024/M51-Abril/second'
 if not os.path.exists(outPath):
     os.makedirs(outPath)
 
@@ -37,6 +62,10 @@ if not os.path.exists(calPath):
 
 hdu = 0
 
+
+band = 'R'
+object = 'M51'
+
 createMbias = False
 masterbiasFile = join(outPath,f'masterbias.fits')
 
@@ -44,9 +73,9 @@ createMdark = False
 masterdarkFile = join(outPath,f'masterdark.fits')
 
 createAutoFlat = False
-autoflatFile = join(outPath,f'autoflat.fits')
+autoflatFile = join(outPath,f'autoflat_{band}.fits')
 
-mosaicFile = join(calPath,"M33_final.fits")
+mosaicFile = join(calPath,f"{object}_final.fits")
 
 
 checkplots = ['photometry']
@@ -54,13 +83,16 @@ checkplots = ['photometry']
 
 ####################################################
 # (1.1) Get files from each night
+# 
+# TODO: Maybe select it with the log... hard to 
+# automate
 ####################################################
 
 verbose=True
 
 nights = []
 for n  in subfolders:
-    nights.append(structure(n, band='G'))
+    nights.append(structure(n, band='R'))
 
 biasList = []
 darkList = []
@@ -80,6 +112,30 @@ if verbose:
     print(f'Dark:  {len(darkList):4d}')
     print(f'Light: {len(lightList):4d}')
 
+#%%
+
+if not os.path.exists(join(path,'log.csv')):
+    log = create_log('/Volumes/IACDrive/AstroFotos/2024')
+    log.to_csv(join(path,'log.csv'), index=False)
+else:
+    log = pd.read_csv(join(path,'log.csv'))
+
+darksind = np.where((log['type'] == 'Dark Frame') * (log['exptime']==240))[0]
+darkList = []
+for i in darksind:
+    darkList.append(join(log['root'][i],log['frame'][i]))
+
+lightind = np.where((log['type'] == 'Light Frame') * (log['exptime']==240
+                    ) *  (log['filter']=='R'))[0] #* (log['object']=='M51')
+lightList = []
+for i in lightind:
+    lightList.append(join(log['root'][i],log['frame'][i]))
+
+if verbose:
+    print('Number of files found:')
+    print(f'Bias:  {len(biasList):4d}')
+    print(f'Dark:  {len(darkList):4d}')
+    print(f'Light: {len(lightList):4d}')
 
 #%%
     
@@ -134,19 +190,22 @@ _,std,_ = sigma_clipped_stats(statsTable['std'])
 filterInd = (statsTable['median'] > med-nsigma*std) & (statsTable['median'] < med+nsigma*std)
 statsTable['Good'] = filterInd
 statsTable.to_csv(join(calPath,'stats.csv'), index=False)
+filterind = np.ones_like(statsTable).astype(bool)
 
 if not os.path.exists(join(calPath,'badFrames')):
     os.makedirs(join(calPath,'badFrames'))
 for f in np.array(lightList)[~filterInd]:
-    os.rename(f, join(os.path.dirname(f),'badFrames',os.path.basename(f)))
+    os.rename(f, join(calPath,'badFrames', os.path.basename(f)))
 
 
-for f in lightList:
+for f in lightList[-24:]:
     data = fits.getdata(f,hdu)
-    ax = show(data)
+    _,med,_ = sigma_clipped_stats(data)
+    ax = show(data-med)
     ax.set_title(os.path.basename(f),fontsize=12)
     fig = ax.get_figure()
-    fig.savefig(f.replace('.fits','.pdf'), format='pdf', dpi=300, bbox_inches='tight')
+    figsave = join(calPath,os.path.basename(f).replace('.fits','.pdf'))
+    fig.savefig(figsave, format='pdf', dpi=200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -172,6 +231,7 @@ else:
     masterbias = fits.getdata(masterbiasFile,0)
 
 
+# darkList = darkList[:40]
 if createMdark or not isfile(masterdarkFile):
     masterdark = darkstack(darkList, masterbias=masterbias, hdu=0)
     header = fits.getheader(darkList[0],0)
@@ -180,8 +240,6 @@ if createMdark or not isfile(masterdarkFile):
     save_fits(masterdark, header, masterdarkFile)
 else:
     masterdark = fits.getdata(masterdarkFile,0)
-
-
 
 #%% Run astrometry so GNUastro works properly also remove bias and dark
 
@@ -215,20 +273,24 @@ calList = glob.glob(join(calPath,'*.fits'))
 ####################################################
 
 hdu=0
-config_nc =f'-Z{30},{30} -t{0.3} --interpnumngb={9} -d{0.8} '
+config_nc =f'-Z{30},{30} -t{0.6} --interpnumngb={9} -d{0.8} '
 
 if createAutoFlat or not isfile(autoflatFile):
     masterflat = autoflat(calList, config_nc=config_nc, hdu=hdu)
+    config_nc =f'-Z{30},{30} -t{0.3} --interpnumngb={9} -d{0.8} '
     masterflat = autoflat(calList, masterflat=masterflat, config_nc=config_nc, hdu=hdu)
+    masterflat[np.isnan(masterflat)] = 1
+    masterflat[masterflat<0]=1
     save_fits(masterflat, None, autoflatFile)
 else:
     masterflat = fits.getdata(autoflatFile)
     masterflat[np.isnan(masterflat)] = 1
 
 # %% Given MasterBias, MasterDark and AutoFlat, calibrate each night
+calList = [join(calPath,os.path.basename(f)) for f in lightList if object not in f]
+
 
 masterflat[np.isnan(masterflat)] = 1
-
 calList = calibrate(calList, masterflat=masterflat, hdu=hdu, dir=night.calibrated, mask=False)
 
 # %% 
@@ -292,60 +354,26 @@ def change_config(file, params, length=23):
 
 # Measure corners of the footprint of the images
 # and define center, size and scale of mosaic 
+
 calList = glob.glob(join(calPath,'*ted.fits'))
+# calList = [l for l in calList if object not in l]
 min_ra, max_ra, min_dec, max_dec, scale = get_corners(calList)
 
 scale = np.round(scale, 2)
 ra0 = (min_ra+max_ra)/2
 dec0 = (min_dec+max_dec)/2
-width, height = (max_ra-min_ra)*3600/scale, (max_dec-min_dec)*3600/scale
+width, height = np.int64((max_ra-min_ra)*3600/scale), np.int64((max_dec-min_dec)*3600/scale)
 
 #%%
 ####################################################
-#       (3.2) Resample all images to the same grid 
-#             using SWarp
-####################################################
-### TODO: Parallelize this part
-###       unsing GNU parallel
-###       https://www.gnu.org/software/parallel/
-###       by creating a file with the commands
-###       and then run parallel 
+#       (3.1) Run scamp to refine astrometry
 ####################################################
 
-
-originalPath = os.getcwd()
-os.chdir(calPath)
-
-swarpFile = join(calPath,'swarp.config')
-os.system(f'swarp -dd > {swarpFile}')
-
-swarpParams = {'CENTER_TYPE':       'MANUAL',
-               'CENTER':            f'{ra0}, {dec0}',
-               'PIXELSCALE_TYPE':   'MANUAL',
-               'PIXEL_SCALE':       scale,
-               'IMAGE_SIZE':        f'{np.int64(width)+2},{np.int64(height)+2}',
-               'SUBTRACT_BACK':     'N'}
-
-change_config(swarpFile, swarpParams)
-
-swarpBatch = join(calPath,'swarpBatch.sh')
-with open(swarpBatch,'w') as f:
-    f.write('#!/bin/bash\n')
-    for file in calList:
-        f.write(f'swarp {file} -c {swarpFile} -IMAGEOUT_NAME {file.replace(".fits","_sw.fits")} & \n')
-
-os.system(f'bash {swarpBatch}')
-
-#%%
-
-####################################################
-#       (3.3) Run SExtractor to refine astrometry
-#             and do photometry
-####################################################
+## Run SExtractor to use catalogs for Scamp
 
 sexFile = join(calPath, 'sex.config')
 sexParamFile = sexFile.replace('.config','.param')
-os.system(f'sex -dd > {sexFile}')
+os.system(f'sex -dd >> {sexFile}')
 
 sexParamsScamp = ['NUMBER','ALPHA_J2000','DELTA_J2000',
     'XWIN_IMAGE','YWIN_IMAGE','ERRAWIN_IMAGE',
@@ -368,15 +396,125 @@ sexConfigScamp = {'CATALOG_TYPE':       'FITS_LDAC',
                   'STARNNW_NAME':       join(sex_param_path,"default.nnw"),}
 
 change_config(sexFile, sexConfigScamp)
+sexBatch = join(calPath,'sexBatch.sh')
+with open(sexBatch,'w') as f:
+    f.write('#!/bin/bash\n')
+    for file in calList[4:6]:
+        f.write(f'sex {file} -c {sexFile} -CATALOG_NAME {file.replace(".fits",".cat")} & \n ')
 
-swarplist = glob.glob(join(calPath,'*sw.fits'))
+cmd = ['bash', sexBatch]
+result = subprocess.run(cmd, capture_output=True, text=True)
+
+catalogs = glob.glob(join(calPath,'*.cat'))
+print('sex done')
+scampFile = join(calPath,'scamp.config')
+os.system(f'scamp -dd > {scampFile}')
+
+scampParams = {'ASTREF_CATALOG':    'GAIA-EDR3',
+               'ASTREF_BAND':       'G',
+               'ASTREFMAG_LIMITS':  '5.0,25.0',
+               'SOLVE_PHOTOM':      'N',
+               'SN_THRESHOLDS':     '3.0,1000.0',
+               'CHECKPLOT_DEV':     'NULL'}
+
+change_config(scampFile, scampParams, length=22)
+
+scampListFile = join(calPath,'scampList.txt')
+with open(scampListFile,'w') as f:
+    for cat in catalogs:
+        f.write(f'{cat} \n')
+
+cmd = ['scamp', f'@{scampListFile}', '-c', scampFile]
+result = subprocess.run(cmd, capture_output=True, text=True)
+
+
+#%%
+####################################################
+#       (3.2) Resample all images to the same grid 
+#             using SWarp
+####################################################
+### TODO: Parallelize this part
+###       unsing GNU parallel
+###       https://www.gnu.org/software/parallel/
+###       by creating a file with the commands
+###       and then run parallel 
+####################################################
+
+
+originalPath = os.getcwd()
+os.chdir(calPath)
+
+swarpFile = join(calPath,'swarp.config')
+os.system(f'swarp -dd >> {swarpFile}')
+
+swarpParams = {'CENTER_TYPE':       'MANUAL',
+               'CENTER':            f'{ra0}, {dec0}',
+               'PIXELSCALE_TYPE':   'MANUAL',
+               'PIXEL_SCALE':       scale,
+               'IMAGE_SIZE':        f'{np.int64(width)+2},{np.int64(height)+2}',
+               'SUBTRACT_BACK':     'N',
+               'MEM_MAX':           '2047',
+               'COMBINE_BUFSIZE':   '2047',
+               'VMEM_MAX':          '4094'
+               }
+
+change_config(swarpFile, swarpParams)
+
+swarpBatch = join(calPath,'swarpBatch.sh')
+with open(swarpBatch,'w') as f:
+    f.write('#!/bin/bash\n')
+    for file in calList[4:6]:
+        f.write(f'swarp {file} -c {swarpFile} -IMAGEOUT_NAME {file.replace("_calibrated.fits",".resamp.fits")} & \n')
+
+# os.system(f'bash {swarpBatch}')
+cmd = ['bash', swarpBatch]
+result = subprocess.run(cmd, capture_output=True, text=True)
+
+#%%
+
+####################################################
+#       (3.3) Run SExtractor to refine astrometry
+#             and do photometry
+####################################################
+
+sexFile = join(calPath, 'sex.config')
+sexParamFile = sexFile.replace('.config','.param')
+os.system(f'sex -dd >> {sexFile}')
+
+sexParamsScamp = ['NUMBER','ALPHA_J2000','DELTA_J2000',
+    'XWIN_IMAGE','YWIN_IMAGE','ERRAWIN_IMAGE',
+    'ERRBWIN_IMAGE','ERRTHETAWIN_IMAGE' ,'FLUX_AUTO',
+    'FLUXERR_AUTO', 'FLAGS', 'FLAGS_WEIGHT',
+    'FLUX_RADIUS', 'ELONGATION', 'SPREAD_MODEL',
+    'SPREADERR_MODEL']
+
+with open(sexParamFile,'w') as f:
+    f.writelines(f"{item}\n" for item in sexParamsScamp)
+
+sex_param_path = '/Users/pmsa/Documents/AstroPipe/extern/SExtractor'
+sexConfigScamp = {'CATALOG_TYPE':       'FITS_LDAC',
+                  'PARAMETERS_NAME':    sexParamFile,
+                  'DETECT_THRESH':      5,
+                  'DETECT_MAXAREA':     400,
+                  'DEBLEND_NTHRESH':    1,
+                  'PIXEL_SCALE':        scale,
+                  'FILTER':             'N',
+                  'BACKPHOTO_TYPE':     'GLOBAL',
+                  'FILTER_NAME':        join(sex_param_path,'default.conv'),
+                  'PSF_NAME':           join(sex_param_path, "default.psf"),
+                  'STARNNW_NAME':       join(sex_param_path,"default.nnw"),}
+
+change_config(sexFile, sexConfigScamp)
+
+swarplist = glob.glob(join(calPath,'*resamp.fits'))
 sexBatch = join(calPath,'sexBatch.sh')
 with open(sexBatch,'w') as f:
     f.write('#!/bin/bash\n')
     for file in swarplist:
         f.write(f'sex {file} -c {sexFile} -CATALOG_NAME {file.replace(".fits",".cat")} & \n ')
 
-os.system(f'bash {sexBatch}')
+cmd = ['bash', sexBatch]
+result = subprocess.run(cmd, capture_output=True, text=True)
 
 #%% Photometry calibration
 
@@ -407,11 +545,11 @@ refcat = cross_match(gaiacat, sdsscat)
 # and calculate zero point, and flux calibration
 targetzp = 22.5
 
-columnid = 'modelMag_g'
+columnid = f'modelMag_{band.lower()}'
 line = lambda x, zp: zp + x
 
-catalogs = glob.glob(join(calPath,'*.cat'))
-for cat in catalogs[22:]:
+catalogs = glob.glob(join(calPath,'*resamp.cat'))
+for cat in catalogs:
     table = Table(fits.open(cat)['LDAC_OBJECTS'].data)
     table['ALPHA_J2000'].name,table['DELTA_J2000'].name = 'ra','dec'
     merge = cross_match(table, refcat)
@@ -421,8 +559,9 @@ for cat in catalogs[22:]:
     flux_err = merge['FLUXERR_AUTO']
     mag = -2.5*np.log10(flux)
     diff = np.zeros_like(mag)
-    for i in range(3):   # Three iterations to remove outliers
-        index = np.isfinite(mag) * (flux>0) * (np.abs(diff) < 0.2)
+    for i in range(2):   # Three iterations to remove outliers
+        _,med,std = sigma_clipped_stats(np.abs(diff))
+        index = np.isfinite(mag) * (flux>0) * (np.abs(diff) <= med+3*std)
         mag[index][np.isnan(mag[index])] = 0
         popt, pcov = curve_fit(line, mag[index], merge[columnid][index])    
         diff = merge[columnid] - (zp -2.5*np.log10(flux))
@@ -431,13 +570,13 @@ for cat in catalogs[22:]:
     # Update image and scale to target zeropoint
     data = fits.getdata(cat.replace('.cat','.fits'))
     header = fits.getheader(cat.replace('.cat','.fits'))
-    fluxscale = 10**(-0.4*(targetzp - zp))
+    fluxscale = 10**(0.4*(targetzp - zp))
     data = data * fluxscale
     header['COMMENT'] = f'Photometry calibrated with AstroPipe'
     header['ZP'] = (targetzp, 'Photometric Zero Point')
     header['ZPERR'] = (zperr, 'Photometric Zero Point Error')
     header['FLUXSCALE'] = (fluxscale, 'Flux Scale factor')
-    fits.PrimaryHDU(data, header).writeto(cat.replace('.cat','.fits'), overwrite=True)
+    fits.PrimaryHDU(data, header).writeto(cat.replace('.cat','_phot.fits'), overwrite=True)
 
     # Check plot
     if 'photometry' in checkplots:
@@ -457,32 +596,15 @@ for cat in catalogs[22:]:
         plt.tight_layout()
         fig.savefig(cat.replace('.cat','_phot.pdf'), format='pdf', dpi=100, bbox_inches='tight')
         plt.close(fig)
+    
 
-#%%
-####################################################
-#       (3.4) Run scamp to refine astrometry
-####################################################
+inflist = glob.glob(join(calPath,'*phot.pdf'))
+merged = merge_pdf(inflist, join(calPath,'photometry.pdf'))
 
-catalogs = glob.glob(join(calPath,'*.cat'))
+if merged:
+    for f in inflist:
+        os.remove(f)
 
-scampFile = join(calPath,'scamp.config')
-os.system(f'scamp -dd > {scampFile}')
-
-scampParams = {'ASTREF_CATALOG':    'GAIA-EDR3',
-               'ASTREF_BAND':       'G',
-               'ASTREFMAG_LIMITS':  '5.0,25.0',
-               'SOLVE_PHOTOM':      'N',
-               'SN_THRESHOLDS':     '3.0,1000.0',
-               'CHECKPLOT_DEV':     'NULL'}
-
-change_config(scampFile, scampParams, length=22)
-
-scampListFile = join(calPath,'scampList.txt')
-with open(scampListFile,'w') as f:
-    for cat in catalogs:
-        f.write(f'{cat} \n')
-
-os.system(f'scamp @{scampListFile} -c {scampFile}')
 
 #%% Final mosaic
     
@@ -511,7 +633,7 @@ swarpParams = { 'SUBTRACT_BACK':     'Y',
 
 change_config(swarpFile, swarpParams)
 
-os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
+# os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
 
 #%%
 ####################################################
@@ -523,7 +645,7 @@ os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
 from AstroPipe.classes import AstroGNU, Image
 from AstroPipe.plotting import show
 
-image = Image(mosaicFile, zp=22.5, hdu=1)
+image = Image(mosaicFile, zp=22.5, hdu=0)
 image.obj(ra0,dec0)
 
 resampList = glob.glob(join(calPath,'*sw.fits'))
@@ -547,9 +669,12 @@ def tiltedSky(coords,c,dx,dy,x0,y0):
     return sky
 
 
+photStats = {'frame':[],'zp':[],'zperr':[],
+                'depth':[], 'sky':[]}
+
 checkplots += ['bkg']
 
-for f in resampList:
+for f in resampList[-5:]:
     data = fits.getdata(f)
 
     framearg = np.argwhere(~np.isnan(data)) 
@@ -572,6 +697,18 @@ for f in resampList:
 
     skymodel = tiltedSky([xx,yy],skyparam[0][0],skyparam[0][1],
                         skyparam[0][2],skyparam[0][3],skyparam[0][4])
+    
+    # Saving stats
+    header = fits.getheader(f)
+    mean, med, std = sigma_clipped_stats(cutout-skymodel)
+    depth = mag_limit(std, Zp=image.zp, scale=image.pixel_scale)
+    sky = image.counts_to_mu(np.nanmean(skymodel))
+
+    photStats['frame'].append(f)
+    photStats['zp'].append(image.zp)
+    photStats['zperr'].append(header['ZPERR'])
+    photStats['depth'].append(depth)
+    photStats['sky'].append(sky)
 
     if 'bkg' in checkplots:
         fig, (ax1,ax2,ax3) = plt.subplots(1,3,figsize=(12,6), sharex=True, sharey=True)
@@ -581,7 +718,7 @@ for f in resampList:
         title=f'z={skyparam[0][0]:.2e} + {skyparam[0][1]:.2e}*(x-{skyparam[0][3]:.2e}) + {skyparam[0][2]:.2e}*(y-{skyparam[0][4]:.2e})'
         fig.suptitle(os.path.basename(f)+'  bkg:'+title,fontsize=12)
         fig.tight_layout()
-        fig.savefig(f.replace('.fits','_bkg2.jpg'), dpi=100, bbox_inches='tight')
+        fig.savefig(f.replace('.fits','_bkg.jpg'), dpi=100, bbox_inches='tight')
         plt.close(fig)
     bkgmodel = np.zeros_like(data)
     bkgmodel[y0:y1,x0:x1] = skymodel
@@ -593,4 +730,33 @@ for f in resampList:
 #     os.remove(f)
 
 # Careful with header of files
+# %%
+finalList = glob.glob(join(calPath,'*bkg.fits'))
+
+headers = glob.glob(join(calPath,'*sw.head'))
+for h in header:
+    os.rename(h, h.replace('sw.head','sw_bkg.head'))
+
+
+swarptxt = join(calPath,'swarpList.txt')
+with open(swarptxt, 'w') as f:
+    for file in finalList:
+        f.write(file+'\n')
+
+os.system(f'swarp -dd > {swarpFile}')
+swarpParams = {'CENTER_TYPE':       'MANUAL',
+               'CENTER':            f'{ra0}, {dec0}',
+               'PIXELSCALE_TYPE':   'MANUAL',
+               'PIXEL_SCALE':       scale,
+               'IMAGE_SIZE':        f'{np.int64(width)+2},{np.int64(height)+2}',
+               'SUBTRACT_BACK':     'N',
+               'MEM_MAX':           '2047',
+               'COMBINE_BUFSIZE':   '2047',
+               'VMEM_MAX':          '4094'
+               }
+               
+change_config(swarpFile, swarpParams)
+
+os.system(f'swarp @{swarptxt} -c {swarpFile} -IMAGEOUT_NAME {mosaicFile}')
+
 # %%

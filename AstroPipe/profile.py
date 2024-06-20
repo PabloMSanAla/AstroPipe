@@ -100,6 +100,10 @@ class Profile:
             self.flux = np.zeros_like(self.rad)
             self.fluxstd = np.zeros_like(self.rad)
             self.npixels = np.zeros_like(self.rad)
+            self.pa = np.zeros_like(self.rad)
+            self.pastd = np.zeros_like(self.rad)
+            self.eps = np.zeros_like(self.rad)
+            self.epsstd = np.zeros_like(self.rad)
         
         self.bkg = 0 
         self.bkgstd = 0 
@@ -122,7 +126,7 @@ class Profile:
                 Image data or path to the fits file
             hdu : int
                 HDU of the fits file. if array is a file
-            plot : str
+            plot : strs
                 If given it will save the plot in the given path.
             save : str
                 If given it will save the profile in the given path.
@@ -138,7 +142,8 @@ class Profile:
                                     plot=plot, save=save)
         
         profile.set_params(bkg=self.bkg, bkgstd=self.bkgstd, 
-                           zp=self.zp, pixscale=self.pixscale)
+                           zp=self.zp, pixscale=self.pixscale,
+                           pastd=self.pastd, epsstd=self.epsstd)
         profile.brightness()
 
         return profile
@@ -182,7 +187,6 @@ class Profile:
         if zp is not None: self.zp = zp
         if pixscale is not None: self.pixscale = pixscale
 
-        
         self.meta = {'zp':zp, 'pixscale':pixscale, 'bkg':bkg , 'bkgstd':bkgstd}
 
         if zp is not None and pixscale is not None and any(self.int>0):
@@ -270,24 +274,31 @@ class Profile:
         self.int = np.concatenate((self.int, new_prof.int[2:]))
         self.intstd = np.concatenate((self.intstd, new_prof.intstd[2:]))
         self.pa = np.concatenate((self.pa, new_prof.pa[2:]))
+        self.pastd = np.concatenate((self.pastd, new_prof.pastd[2:]))
         self.eps = np.concatenate((self.eps, new_prof.eps[2:]))
+        self.epsstd = np.concatenate((self.epsstd, new_prof.epsstd[2:]))
         self.x = np.concatenate((self.x, new_prof.x[2:]))
         self.y = np.concatenate((self.y, new_prof.y[2:]))
+        self.flux = np.concatenate((self.flux, new_prof.flux[2:]))
+        self.fluxstd = np.concatenate((self.fluxstd, new_prof.fluxstd[2:]))
         self.brightness()
     
     def remove_nans(self):
         if not hasattr(self, 'mu'): self.brightness()
-        index = np.isnan(self.int) + np.isnan(self.rad) + np.isnan(self.mu)
-        self.rad = self.rad[~index]
-        self.int = self.int[~index]
-        self.intstd = self.intstd[~index]
-        self.flux = self.flux[~index]
-        self.fluxstd = self.fluxstd[~index]
-        self.npixels = self.npixels[~index]
-        self.pa = self.pa[~index]
-        self.eps = self.eps[~index]
-        self.x = self.x[~index]
-        self.y = self.y[~index]
+        half = len(self.mu)//2
+        cutind = half + np.argwhere(np.isnan(self.mu[half:]))[0][0]
+        self.rad = self.rad[:cutind]
+        self.int = self.int[:cutind]
+        self.intstd = self.intstd[:cutind]
+        self.flux = self.flux[:cutind]
+        self.fluxstd = self.fluxstd[:cutind]
+        self.npixels = self.npixels[:cutind]
+        self.pa = self.pa[:cutind]
+        self.pastd = self.pastd[:cutind]
+        self.eps = self.eps[:cutind]
+        self.epsstd = self.epsstd[:cutind]
+        self.x = self.x[:cutind]
+        self.y = self.y[:cutind]
         self.brightness()
     
     def interpolateCurve(self, var1, var2, nElements=10000, kind='linear'):
@@ -387,7 +398,7 @@ class Profile:
         -------
         fracRad : float
             The radius containing the desired fraction of the galaxy's total
-            light, in pixels
+            light, in arcseconds
         '''
         totalFlux = 10**(-0.4*(totalMag - self.zp))
         findFlux = totalFlux * fluxFrac
@@ -399,7 +410,7 @@ class Profile:
         idx = ut.closest(cog, findFlux)
         fracRad = sma[idx]
 
-        return fracRad
+        return fracRad*self.pixscale
 
     def concentration(self, totalMag, f1 = 0.8, f2=0.2):
         '''
@@ -504,7 +515,7 @@ class Profile:
         Returns
         -------
         radPetro : float
-            Petrosian radius in pixels
+            Petrosian radius in arcseconds
 
         NOTE: quick check, for an exponential profile, R_petrosian ~
         2x R_eff.
@@ -521,9 +532,35 @@ class Profile:
         idx = ut.closest(petrosian, eta)
         radPetro = sma[idx]
 
-        return radPetro
+        return radPetro*self.pixscale
+    
+    def surfaceBrightness(self, radius, sky=None):
+        '''Computes the surface brightness level at a given radius
+        
+        Parameters
+        ----------
+            radius : float
+                Radius of the surface brightness level [arcsec]
+            sky : float
+                Sky background of the image [default is None]
+
+        Returns
+        -------
+            mu : float
+                Surface brightness level at the given radius [mag*arcsec^-2]
+        '''
+        if sky is not None:
+            mu = self.zp - 2.5*np.log10(self.int - sky) + 5*np.log10(self.pixscale)
+        else:
+            mu = self.mu
+        sma, sb = self.interpolateCurve(self.rad,
+                                        mu)
+        idx = ut.closest(sma, radius/self.pixscale)
+        return sb[idx]
+
 
     def write(self, filename=None, overwrite=True):
+        '''Saves the profile in a fits file'''
         self.meta = {'zp':self.zp, 'pixscale': self.pixscale, 
                      'bkg':self.bkg , 'bkgstd': self.bkgstd}
         
@@ -539,6 +576,7 @@ class Profile:
         return os.path.isfile(filename)
     
     def load(self, filename):
+        '''Loads previously saved profile from file'''
         table = Table.read(filename)
         self.set_params(np.array(table[self.columns[0]].value), 
             np.array(table[self.columns[1]].value), np.array(table[self.columns[2]].value), 
@@ -549,6 +587,23 @@ class Profile:
             (np.array(table[self.columns[10]].value), np.array(table[self.columns[11]].value)), 
             table.meta['BKG'], table.meta['BKGSTD'], table.meta['ZP'], table.meta['PIXSCALE'])
         self.table = table
+
+    def load_isolist(self, isolist):
+        '''Loads the profile from an photutils.isophote.IsophoteList object'''
+        self.set_params(isolist.sma, isolist.intens, isolist.int_err, 
+                        isolist.tflux_e, isolist.npix_e,
+                        isolist.pa*180/np.pi, isolist.pa_err*180/np.pi,
+                        isolist.eps, isolist.ellip_err, (isolist.x0, isolist.y0))
+        self.brightness()
+
+    def load_isolist_table(self, tableFile):
+        '''Loads the profile from a table file with 
+        same format as a photutils.isophote.IsophoteList'''
+        tbl = Table.read(tableFile)
+        self.set_params(radii=tbl['sma'].value, intensity=tbl['intens'].value, instensity_err=tbl['int_err'].value, 
+            flux=tbl['tflux_e'].value, fluxstd=None, npixels=tbl['npix_e'].value,
+            pa=tbl['pa'].value-90, pastd=tbl['pa_err'].value, eps=tbl['eps'].value, epsstd=tbl['ellip_err'].value, 
+            center=(tbl['x0'].value,tbl['y0'].value))
 
 def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, axes=None, color='k', label=None, **kwargs):
     '''
@@ -596,8 +651,11 @@ def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, axes=None, color
 
     # Surface Brightness plot
     axmu.plot(radius, mu, color=color, label=label, **kwargs)
-    if mupper is not None: axmu.plot(radius, mupper, color=color, ls='--')
-    if mlower is not None: axmu.plot(radius, mlower, color=color, ls='--')
+    if mupper is not None and mlower is not None: 
+        axmu.fill_between(radius, mupper, mlower, color=color, alpha=0.3)
+    elif mupper is not None: axmu.plot(radius, mupper, color=color, ls='--')
+    elif mlower is not None: axmu.plot(radius, mlower, color=color, ls='--')
+    
     axmu.set_ylabel('$\mu\,[\mathrm{mag\,arcsec}^{-2}]$',fontsize=14,labelpad=3)
     axmu.invert_yaxis()
 
@@ -637,7 +695,14 @@ def get_surface_brightness(rad, intensity,  intensitystd, bkg, bkgstd, pixscale,
     lowerr = zp - 2.5*np.log10(intensity - bkg + intensitystd + bkgstd) + 5*np.log10(pixscale)
     upperr = zp - 2.5*np.log10(intensity - bkg - intensitystd - bkgstd) + 5*np.log10(pixscale)
     if any(np.isnan(lowerr)): lowerr[np.isnan(lowerr)] = np.interp(rad[np.isnan(lowerr)], rad[~np.isnan(lowerr)], lowerr[~np.isnan(lowerr)])
-    if any(np.isnan(upperr)): upperr[np.isnan(upperr)] = np.interp(rad[np.isnan(upperr)], rad[~np.isnan(upperr)], upperr[~np.isnan(upperr)])
+    if any(np.isnan(upperr)): 
+        ind = np.argwhere(np.isnan(upperr))
+        # slope = np.nanmedian(mag[ind]-mag[ind-1])
+        # upperr[ind] =  upperr[ind[0]-1] + slope*(rad[ind] - rad[ind[0]-1])
+        maxdiff = np.nanmax(upperr-mag)
+        upperr[ind] = mag[ind] + maxdiff
+        # if any(np.isnan(upperr)):
+        #     upperr[np.isnan(upperr)] = np.interp(rad[np.isnan(upperr)], rad[~np.isnan(upperr)], upperr[~np.isnan(upperr)])
     maxdiff = np.nanmax([np.abs(mag-lowerr), np.abs(mag-upperr)])
     upperr[upperr<mag] = mag[upperr<mag] + maxdiff
     lowerr[lowerr>mag] = mag[lowerr>mag] - maxdiff
@@ -701,7 +766,9 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
     else:
         profile = Profile()
         profile.set_params(pa=pa, eps=eps, center=center, radii=rad,
-                           intensity=np.zeros_like(rad), instensity_err=np.zeros_like(rad))
+                           intensity=np.zeros_like(rad), instensity_err=np.zeros_like(rad),
+                           flux=np.zeros_like(rad), fluxstd=np.zeros_like(rad), 
+                           npixels=np.zeros_like(rad))        
 
     # TODO: If keyword rad is givem maybe extrapolate pa, and eps¿?
     # if rad is not None:
@@ -715,7 +782,6 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
     previous_mask = np.zeros_like(data)
 
     for i,rad in enumerate(profile.rad):
-        
         if i>0:
             profile.rad[i] = (profile.rad[i-1] + profile.rad[i])/2
         # generate astropy aperture
@@ -726,6 +792,7 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
         # create mask and index list of the aperture and updates previous one 
         mask = ellip_apertures[-1].to_mask(method='center').to_image(data.shape)
         index = (data.mask==False) * (mask!=0) * (previous_mask==0)
+        maskinside = (data.mask==True)*(mask!=0)*(previous_mask==0)
         previous_mask = mask
 
         # compute sigma clipped median of the aperture 
@@ -735,8 +802,8 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
         if np.isnan(profile.intstd[i]): profile.intstd[i] = profile.intstd[i-1] 
         
         # integrated photometry 
-        profile.npixels[i] =  profile.npixels[i-1] + np.size(data.data[index])
-        profile.flux[i] =  profile.flux[i-1] + np.nansum(data.data[index])
+        profile.npixels[i] =  profile.npixels[i-1] + np.size(data.data[index]) + np.sum(maskinside)
+        profile.flux[i] =  profile.flux[i-1] + np.nansum(data.data[index]) + np.nanmax([0,profile.int[i]*np.sum(maskinside)])
         profile.fluxstd[i] = np.sqrt(profile.fluxstd[i-1]**2 +  (np.sqrt(profile.npixels[i-1])*profile.intstd[i-1])**2)
 
     if plot is not None:
@@ -1271,6 +1338,115 @@ def asymtotic_fit_radius(x,y):
         want = np.abs(yy - y2) <= 3*rms
     
     return -fit[1]/fit[0]
+
+def measureImageNoise(maskedImageArray,
+                      galX,
+                      galY,
+                      galRad, galPa, galEps,
+                      halfBoxWidth=10,
+                      nboxes=50,
+                      seed=None,
+                      plot=False):
+    '''
+    Outputs metrics for the background noise and flux.
+
+    Parameters
+    ----------
+    maskedImageArray : numpy.ma.core.MaskedArray
+        Image with interloping sources masked
+    galX : float
+        Central x-coordinate of target galaxy
+    galY : float
+        Central y-coordinate of target galaxy
+    galRad : int
+        Radius out to which to apply circular mask to target galaxy [pixel]
+    galPa : float
+        Position angle of target galaxy [degrees]. X to Y direction. Anti-clockwise.
+    galEps : float
+        Ellipticity of target galaxy [1-b/a]
+    halfBoxWidth : int, optional
+        Half the desired width of the boxes used to calculate the noise.
+        The default is 10.
+    seed : int, optional
+        A seed for the random generator, for testing purposes
+
+    Returns
+    -------
+    avRms : float
+        The average root mean square among counts in nboxes randomly
+        distributed boxes, ignoring masked pixels
+    sbLim : float
+        The standard deviation of the median values within nboxes randomly
+        distributed boxes, ignoring masked pixels
+    sky : float
+        Median of the median values within nboxes randomly distributed boxes,
+        ignoring masked pixels
+    skystd : float
+        Error on de median value sky. std/sqrt(nboxes).
+    '''
+    rng = np.random.default_rng(seed)
+    # Need to avoiding actually altering the image and mask used
+    if type(maskedImageArray) == np.ma.core.MaskedArray:
+        data = np.zeros(maskedImageArray.shape) + maskedImageArray.data
+        mask = np.zeros(maskedImageArray.shape, dtype=bool)\
+            + maskedImageArray.mask
+        maskedImageArray = np.ma.masked_array(data, mask=mask)
+    else:
+        maskedImageArray = np.zeros(maskedImageArray.shape) + maskedImageArray
+
+    # Boundaries: avoid masked interlopers, the target galaxy, and image edges
+    edge_mask = np.zeros(maskedImageArray.data.shape, dtype=bool) + True
+    edge_mask[halfBoxWidth: -halfBoxWidth, halfBoxWidth: -halfBoxWidth] = False
+    # width = np.sqrt(np.pi*galRad**2 - 2*(2*halfBoxWidth)**2) - galRad
+    nExtra = np.pi*galRad / (halfBoxWidth*2)**2
+    width = np.sqrt(2*(nboxes+nExtra)*(2*halfBoxWidth)**2/np.pi)
+    ellipannulus = EllipticalAnnulus((galX,galY), 
+                        galRad, galRad+width, 
+                        (1-0.6*galEps)*(galRad+width),
+                        theta=galPa*np.pi/180)
+    regionOfInterest = ellipannulus.to_mask(method='center').to_image(data.shape).astype(bool)
+    mask = np.array(maskedImageArray.mask + ~regionOfInterest + edge_mask).astype(bool)
+    
+    # Measure stats in boxes
+    good_coords = np.where(~mask)
+    if good_coords[0].size < nboxes*halfBoxWidth*2:
+        raise Warning(f'Not enough unmasked pixels to measure noise in {nboxes} boxes.'
+                      f' Only {good_coords[0].size} unmasked pixels available.')
+    
+    if plot:
+        ax=show(np.ma.masked_array(data, mask=mask))
+
+    rms = np.array([])
+    medians = np.array([])
+    stds = np.array([])
+    newmask = np.zeros(mask.shape, dtype=bool) + mask
+    for i in range(nboxes):
+        idx = rng.choice(np.arange(len(good_coords[0])))
+        ceny, cenx = good_coords[0][idx], good_coords[1][idx]
+        box = data[ceny-halfBoxWidth:ceny+halfBoxWidth,
+                   cenx-halfBoxWidth:cenx+halfBoxWidth]
+        maskbox = mask[ceny-halfBoxWidth:ceny+halfBoxWidth,
+                          cenx-halfBoxWidth:cenx+halfBoxWidth]
+        rms = np.append(rms, np.sqrt(np.nansum(box[~maskbox]**2)/np.sum(~np.isnan(box) * ~maskbox)))
+        _,med,std = sigma_clipped_stats(box)
+        medians = np.append(medians, med)
+        stds = np.append(stds, std)
+        newmask[ceny-halfBoxWidth:ceny+halfBoxWidth,
+                   cenx-halfBoxWidth:cenx+halfBoxWidth] = True
+        good_coords = np.where(~newmask)
+        if plot:
+            aperture = RectangularAperture((cenx, ceny), w=halfBoxWidth, h=halfBoxWidth)
+            aperture.plot(ax, color='black', lw=2)
+
+    avRms = np.nanmean(rms)
+    sbLim = np.nanstd(medians)
+    sky = np.nanmedian(medians)
+    skystd = np.nanstd(medians)/np.sqrt(np.sum(~np.isnan(medians)))
+
+    
+
+    return avRms, sbLim, sky, skystd
+
 
 # Find radius where an asintote starts in a profile
 def find_radius_asintote(x,y):
