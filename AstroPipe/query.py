@@ -244,7 +244,7 @@ def s4g_images(name, channel=1, mask=False, sigma=False, outdir='',verbose=False
 
     return sucess
 
-def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='ls-dr10', verbose=False, rgb=False):
+def legacy_mosaic(ra, dec, outdir='', name='', width=0.3, scale=0.263, bands='griz', layer='ls-dr10', verbose=False, rgb=False):
     '''
     Downloads cutotus from the Legacy Survey Server.
 
@@ -256,6 +256,8 @@ def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='
             Declination of the center of the mosaic. [degress]
         outdir : str, optional
             Directory where the mosaic will be saved. The default is '.'.
+        name : str, optional
+            Name of the output mosaic file. 
         width : float, optional
             Size of the mosaic in degrees. The default is 0.3.
         scale : float, optional
@@ -272,18 +274,24 @@ def des_mosaic(ra, dec, outdir='', width=0.3, scale=0.263, bands='griz', layer='
         bool
             True if the mosaic was downloaded successfully.
     '''
-
-    url = f'https://www.legacysurvey.org/viewer/fits-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&bands={bands}&size={np.int64(width*3600/scale)}'
+    size = np.int64(width*3600/scale)
+    url = f'https://www.legacysurvey.org/viewer/fits-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&bands={bands}&size={size}'
     # url = f'https://www.legacysurvey.org/viewer/cutout.fits?ra={ra}&dec={dec}&layer=ls-dr9&pixscale={scale}&size={round(width*3600/scale)}'
     if verbose: print(url)
 
-    filename = wget.download(url, out=outdir)
+    if not name: name = os.path.join(outdir,f'legacy_{ra}_{dec}_{size}_{bands}.fits')
+    
+    # filename = wget.download(url, out=outdir)   ## not working properly
+    result = os.system(f'wget -O {name} "{url}" ')
 
     if rgb: 
-        url = f'https://www.legacysurvey.org/viewer/jpeg-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&size={np.int64(width*3600/scale)}'
-        rgbfile = wget.download(url, out=outdir.replace('.fits','.jpg'))
-    if verbose: print(filename)
-    return filename
+        url = f'https://www.legacysurvey.org/viewer/jpeg-cutout?ra={ra}&dec={dec}&layer={layer}&pixscale={scale}&size={size}'
+        rgbfile = name.replace('.fits','.jpg')
+        # rgbfile = wget.download(url, out=outdir.replace('.fits','.jpg'))
+        jpgresult = os.system(f'wget -O {rgbfile} "{url}" ')
+
+    if verbose: print(name)
+    return name
 
 
 def reconstructPSF(psFieldFilename:str, filter:str,

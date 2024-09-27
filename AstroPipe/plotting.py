@@ -208,7 +208,7 @@ def show(image, ax=None, vmin=None, vmax=None, zp=None, pixel_scale=1, mask=None
         plt.tight_layout()
         return ax
     
-def histplot(data, vmin=None, vmax=None):
+def histplot(data, vmin=None, vmax=None, bins=None):
     '''
     Creates histogram of the data given. 
 
@@ -230,12 +230,16 @@ def histplot(data, vmin=None, vmax=None):
     mean,med,std = sigma_clipped_stats(data, sigma=2.5)
     q99 = np.nanpercentile(data,99.9)
     
+    if bins is None: 
+        bins = np.logspace(np.log10(mean-10*std),np.log10(mean+10*std),500)
+        bins = np.append(bins, np.logspace(np.log10(mean+10*std),np.log10(q99*1.1),500))
+
     hrange = [mean-10*std, q99*1.1]
     if vmin is not None: hrange[0] = vmin 
     if vmax is not None: hrange[1] = vmax 
     
     fig,ax = plt.subplots(1,1,figsize=(16,4))
-    ax.hist(data.flatten(),range=hrange,bins=1000)
+    ax.hist(data.flatten(),range=hrange,bins=bins)
     ax.axvline(med,color='red',ls=':')
     ax.axvline(med-std,color='red',ls='--')
     ax.axvline(med+std,color='red',ls='--')

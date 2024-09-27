@@ -263,13 +263,29 @@ class Profile:
                            axes=axes, color=color, label=label, **kwargs)
         return fig
 
-    def extend(self, array, max_radius, growth_rate=None):
-        '''Extends the radial profile to a new maximum radius'''
+    def extend(self, data, max_radius, growth_rate=None):
+        '''Extends the radial profile to a new maximum radius
+        using the growth rate of the profile.
+        
+        Parameters
+        ----------
+            data : array
+                Image data where the profile was extracted
+            max_radius : float
+                New maximum radius of the profile
+            growth_rate : float
+                Growth rate of the profile. If None it will use the median growth rate.
+        
+        Returns
+        -------
+            None
+        '''
+
         if growth_rate is None: growth_rate = np.nanmedian(self.rad[1:]/self.rad[:-1])
         alpha = np.log10(growth_rate)
         n = np.log10(max_radius/self.rad[-1])//alpha + 1
         new_rad = self.rad[-3]*10**(alpha*np.arange(1,n+1))
-        new_prof = elliptical_radial_profile(array, new_rad, (self.x[-1], self.y[-1]), self.pa[-1], self.eps[-1])
+        new_prof = elliptical_radial_profile(data, new_rad, (self.x[-1], self.y[-1]), self.pa[-1], self.eps[-1])
         self.rad = np.concatenate((self.rad, new_rad[2:]))
         self.int = np.concatenate((self.int, new_prof.int[2:]))
         self.intstd = np.concatenate((self.intstd, new_prof.intstd[2:]))
@@ -727,7 +743,7 @@ def surface_photometry(data, mask, center, growth_rate=1.03,
     return table
 
 
-def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
+def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03, weight=None,
                         plot=None, save=None):
     '''
     Sigma clipped average elliptical radial profile of a galaxy.
@@ -742,13 +758,15 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
         center : tuple
             Center of the galaxy (x,y).
         pa : float
-            Position angle of the galaxy.
+            Position angle of the galaxy (degrees).
         eps : float
             Ellipticity of the galaxy [1-b/a]
         max_r : float
             Maximum radius of the profile.
         growth_rate : float
             Growth rate of the apertures.
+        weight : array
+            Weight of the pixels to do an aritmetic mean.
         plot : str
             If given it will save the plot in the given path.
         save : str
@@ -768,7 +786,10 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
         profile.set_params(pa=pa, eps=eps, center=center, radii=rad,
                            intensity=np.zeros_like(rad), instensity_err=np.zeros_like(rad),
                            flux=np.zeros_like(rad), fluxstd=np.zeros_like(rad), 
-                           npixels=np.zeros_like(rad))        
+                           npixels=np.zeros_like(rad),
+                           pastd=np.zeros_like(rad), epsstd=np.zeros_like(rad))    
+           
+    if weight is None: weight = np.ones_like(data)
 
     # TODO: If keyword rad is givem maybe extrapolate pa, and eps¿?
     # if rad is not None:
@@ -797,7 +818,8 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03,
 
         # compute sigma clipped median of the aperture 
         clipped = sigma_clip(data.data[index], sigma=2.5, maxiters=3)
-        profile.int[i] = np.ma.median(clipped)
+        norm = np.sum(weight[index][clipped.mask==False])
+        profile.int[i] = np.ma.sum(clipped*weight[index]) / norm
         profile.intstd[i] = np.nanstd(clipped)/np.sqrt(np.size(clipped))
         if np.isnan(profile.intstd[i]): profile.intstd[i] = profile.intstd[i-1] 
         
@@ -1239,6 +1261,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
 
     # Plotting
     if out is not None: 
+        plt.rcParams.update({"text.usetex": False})
         fig = plt.figure(figsize=(12,8))
         ax1 = plt.subplot2grid((4,3),(1,0))
         ax2 = plt.subplot2grid((4,3),(2,0),sharex=ax1)
@@ -1310,8 +1333,10 @@ Background = {localsky:.3e} +- {localsky_std:.3e}
         # ax4.text(0.02, 1.05, os.path.basename(os.path.splitext(out)[0]), ha='left',
         #         va='bottom', transform=ax4.transAxes, fontweight='bold',fontsize='large')
         fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.1)
+        plt.rcParams.update({"text.usetex": True})
 
-    return localsky, localsky_std, float(np.nanmax([rad[-1],maxr]))
+
+    return aper_bkg, localsky_std, float(np.nanmax([rad[-1],maxr]))
 
 
 

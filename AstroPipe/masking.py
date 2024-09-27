@@ -515,10 +515,10 @@ def automatic_mask(IMG,folders,sex_config=point_sexcofing,nc_config='--numthread
     if hasattr(IMG,'bkg'): bkg = IMG.bkg
     else: bkg = 0
     gnu = AstroGNU(IMG.file, hdu=IMG.hdu, dir=folders.temp)
-    gnu.noisechisel(config=nc_config)
-    gnu.segment(config=nc_config)
-    gnu.make_catalog(config=nc_config)
-
+    gnu.noisechisel(config=nc_config, keep=True)
+    gnu.segment(config=nc_config, keep=True)
+    gnu.make_catalog(zp=IMG.zp, config=nc_config)
+    
     IMG.noise(gnu.objects,
             plot=os.path.join(folders.temp,IMG.name+"_noise.png"))
 
@@ -580,8 +580,8 @@ def automatic_mask(IMG,folders,sex_config=point_sexcofing,nc_config='--numthread
 
     gnu_extended = AstroGNU(temporary_masked_file, hdu=0, dir=folders.temp)
 
-    gnu_extended.noisechisel(config=nc_config+' --tilesize=7,7')
-    gnu_extended.segment(config='--gthresh=1 --snminarea=30 ')
+    gnu_extended.noisechisel(config=nc_config+' --tilesize=7,7', keep=True)
+    gnu_extended.segment(config='--gthresh=1 --snminarea=30 ', keep=True)
 
     id_extended = gnu_extended.objects[np.int(IMG.pix[1]),np.int(IMG.pix[0])]
 
@@ -627,7 +627,8 @@ def automatic_mask(IMG,folders,sex_config=point_sexcofing,nc_config='--numthread
     if plot: 
         IMG.show()
         plt.savefig(os.path.join(folders.temp,IMG.name+'_mask.jpg'),dpi=300)
-
+    gnu.remove()
+    gnu_extended.remove()
 
 def ds9_region_masking(IMG,folders):
 

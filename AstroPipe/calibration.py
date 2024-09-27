@@ -81,14 +81,19 @@ class astrometry():
             
     def define_telescope(self,telescope):
         if telescope=='TSS':
-            self.L = 0.9
+            self.L = 0.9            # lower in arcsec/pixel
             self.H = 1.1
-            self.radius = 0.5
+            self.radius = 0.5       # radius in degrees
         
         elif telescope=='INT':
             self.L = 0.3
             self.H = 0.4
             self.radius = 0.4
+        elif telescope=='NTT':
+            self.L = 0.2
+            self.H = 0.3
+            self.radius = 0.1
+
         else:
             print('Telescope not defined.')
 

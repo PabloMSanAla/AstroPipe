@@ -79,6 +79,30 @@ def redshift_to_kpc(redshift,H0=70,Tcmb0 = 2.725, Om0=0.3):
     cosmo = FlatLambdaCDM(H0=H0* u.km / u.s / u.Mpc, Tcmb0=Tcmb0* u.K , Om0=Om0)
     return (cosmo.luminosity_distance(redshift) * 1000 * u.kpc/u.Mpc).value
 
+def redshift_to_gyr(z,H0=70,Tcmb0 = 2.725, Om0=0.3):
+    """
+    Converts redshift to Gyr using LambdaCDM cosmology.
+
+    Parameters
+    ----------
+        redshift : float, or array
+            Redshift of the object.
+        H0 : float, optional
+            Hubble constant. The default is 70. [km/s/Mpc]
+        Tcmb0 : float, optional
+            CMB temperature. The default is 2.725. [K]
+        Om0 : float, optional
+            Matter density. The default is 0.3.
+    
+    Returns
+    -------
+        Age : float
+            Age of the Universe in Gyr
+    """
+    cosmo = FlatLambdaCDM(H0=H0* u.km / u.s / u.Mpc, Tcmb0=Tcmb0* u.K , Om0=Om0)
+    age = cosmo.age(z)
+    return age.to(u.Gyr).value
+
 def kpc_to_arcsec(kpc, distance):
     '''Function that given a physical size of an object
     and its physical distance it converts it into the
@@ -561,7 +585,7 @@ def find_center(data, center, width=30):
     return x,y
 
 def average_bin(x,y,bins):
-    '''Average a variable y in bins of x
+    '''Average a variable y in bins of x in 1D.
     
     Parameters
     ----------
@@ -576,14 +600,20 @@ def average_bin(x,y,bins):
     -------
         ybins : array
             Averaged y values in bins of x.
+        ystd:   array
+            Error on the average y values.
     '''
     x = np.zeros_like(x) + np.array(x)
     y = np.zeros_like(y) + np.array(y)
     xbins = np.digitize(x,bins)
     ybins = np.zeros(len(bins)-1)
+    ystd = np.zeros(len(bins)-1)
     for i in range(1,len(bins)):
-        ybins[i-1] = np.nanmean(y[xbins==i])
-    return ybins
+        ind = xbins==i
+        ybins[i-1] = np.nanmean(y[ind])
+        ystd[i-1] = np.nanstd(y[ind])/np.sqrt(np.sum(ind))
+    
+    return ybins,ystd
 
 
 def limits(x,y,n=30):
@@ -816,6 +846,7 @@ def magnitude_to_mass(magnitude, distance, mass_to_light=0.6, absmagsolar = 6.02
 
 
 
+
 def optical_to_IR(mag, distance, epsilon=1e-5, mass_to_light=0.6, N=100, verbose=False):
     '''
     Iterative process to find the offset between optical i-band and 3.6 micron magnitudes
@@ -900,4 +931,4 @@ def power_spectrum(image):
     return power.flatten(), k2.flatten()
 
 
-from scipy import ndimage
+
