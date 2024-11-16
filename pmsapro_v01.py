@@ -300,58 +300,6 @@ calList = calibrate(calList, masterflat=masterflat, hdu=hdu, dir=night.calibrate
 ####################################################
 
 # Fist found using the wcs of all images the final frame to resample all images.
-
-def deg_to_hms(ra_deg,dec_deg):
-    coord = SkyCoord(ra=ra_deg, dec=dec_deg, unit="deg")
-    return coord.to_string(style="hmsdms", precision=2, pad=True)
-
-def deg_to_dms(dec_deg):
-    coord = SkyCoord(ra=0, dec=dec_deg, unit="deg")
-    return coord.to_string(style="hmsdms", precision=2, pad=True)
-
-
-def get_corners(fileList):
-    '''
-    Get the equatorial coordinates (ra,dec) of the corners of 
-    the footprint of a list of images. Also returns the mean pixel scale.
-
-    Parameters
-    ----------
-        fileList : list
-            List of images.
-    
-    Returns
-    -------
-        min_ra, max_ra, min_dec, max_dec, scale : float
-            Minimum and maximum values of RA and Dec [deg] and 
-            mean pixel scale [pixel/arcsec].
-    '''
-    ras, decs, pixscales = [], [], []
-    for file in fileList:
-            header = fits.getheader(file)
-            wcs = WCS(header)
-            height, width = fits.getdata(file).shape
-            pixels_corners = np.array([[0, 0], [0, height], [width, height], [width, 0]])
-            ra_dec_corners = wcs.pixel_to_world_values(pixels_corners[:, 0], pixels_corners[:, 1])
-            ras.extend(ra_dec_corners[0])
-            decs.extend(ra_dec_corners[1])
-            pixscales.append(get_pixel_scale(header))
-
-    min_ra, max_ra = np.nanmin(ras), np.nanmax(ras)
-    min_dec, max_dec = np.nanmin(decs), np.nanmax(decs)
-
-    return min_ra, max_ra, min_dec, max_dec, np.nanmean(pixscales)
-
-def change_config(file, params, length=23):
-    with open(file,'r') as f:
-        lines = f.readlines()
-    for key,value in params.items():
-        for i,line in enumerate(lines):
-            if line.startswith(key+' '):
-                lines[i] = f'{key.ljust(length)} {value}\n'
-    with open(file,'w') as f:
-        f.writelines(lines)
-
 # Measure corners of the footprint of the images
 # and define center, size and scale of mosaic 
 

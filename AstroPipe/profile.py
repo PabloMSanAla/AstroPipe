@@ -574,6 +574,31 @@ class Profile:
         idx = ut.closest(sma, radius/self.pixscale)
         return sb[idx]
 
+    def averageSurfaceBrightness(self, radius, sky=None):
+        '''Computes the average surface brightness level 
+        inside  a given radius 
+        
+        Parameters
+        ----------
+            radius : float
+                Maximum radius used to measeure average SB [arcsec]
+            sky : float
+                Sky background of the image [default is None]
+
+        Returns
+        -------
+            mu : float
+                Average surface brightness level at the given radius [mag*arcsec^-2]
+        '''
+        if sky is not None:
+            mu = self.zp - 2.5*np.log10(self.int - sky) + 5*np.log10(self.pixscale)
+        else:
+            mu = self.mu
+        sma, sb = self.interpolateCurve(self.rad,
+                                        mu)
+        idx = ut.closest(sma, radius/self.pixscale)
+        return np.nanmean(sb[:idx])
+
 
     def write(self, filename=None, overwrite=True):
         '''Saves the profile in a fits file'''
@@ -612,10 +637,10 @@ class Profile:
                         isolist.eps, isolist.ellip_err, (isolist.x0, isolist.y0))
         self.brightness()
 
-    def load_isolist_table(self, tableFile):
+    def load_isolist_table(self, tableFile,format=None):
         '''Loads the profile from a table file with 
         same format as a photutils.isophote.IsophoteList'''
-        tbl = Table.read(tableFile)
+        tbl = Table.read(tableFile, format=format)
         self.set_params(radii=tbl['sma'].value, intensity=tbl['intens'].value, instensity_err=tbl['int_err'].value, 
             flux=tbl['tflux_e'].value, fluxstd=None, npixels=tbl['npix_e'].value,
             pa=tbl['pa'].value-90, pastd=tbl['pa_err'].value, eps=tbl['eps'].value, epsstd=tbl['ellip_err'].value, 
@@ -1225,7 +1250,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
     bkg_aperture = EllipticalAnnulus((center[0],center[1]),
                      (1-aperfactor)*skyradii[0], (1+aperfactor)*skyradii[1], 
                     (1-0.6*eps)*(1+aperfactor)*skyradii[1], None,
-                    pa)
+                    theta=pa)
 
     # Measure the background using the elliptical annulus
     mask_aper = bkg_aperture.to_mask(method='center').to_image(data.shape)

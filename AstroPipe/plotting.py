@@ -415,7 +415,7 @@ def plot_ellipses(radius, pa, eps, center, ax=None, color='black', step=1, max_r
         if i%step==0 and radius[i]<=max_r:
             ellipse_patch = patches.Ellipse(center[:,i],
                 2*radius[i],2*(radius[i] * (1 - eps[i])),
-                pa[i], color=color, fill=False, **kwargs)
+                angle=pa[i], color=color, fill=False, **kwargs)
             ax.add_patch(ellipse_patch)
     return ax
 
@@ -430,7 +430,7 @@ def plot_ellipses_old(profile, step=1, ax=None,max_r=None, center=(0,0),color='b
             ellipse_patch = patches.Ellipse(center,
                 2*row['radius'],
                 2*(row['radius'] * (1 - row['ellipticity'])),
-                row['pa'],
+                angle=row['pa'],
                 color=color, fill=False, **kwargs)
 
             ax.add_patch(ellipse_patch)
@@ -447,7 +447,7 @@ def plot_ellipses_new(profile, step=1, ax=None, max_r=None, center=(0,0),color='
             ellipse_patch = patches.Ellipse(center,
                 2*rad,
                 2*(rad * (1 - profile.eps[i])),
-                profile.pa[i],
+                angle=profile.pa[i],
                 color=color, fill=False, **kwargs)
             ax.add_patch(ellipse_patch)    
     return ax

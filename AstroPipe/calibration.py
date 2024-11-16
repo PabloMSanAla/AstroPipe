@@ -1,6 +1,6 @@
 import glob
 from re import S 
-from astropy.io import fits
+
 import numpy as np
 import os
 from os.path import join
@@ -8,8 +8,15 @@ from astropy.stats import SigmaClip
 import astroalign
 import subprocess
 
+from astropy.io import fits
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+
 from .classes import AstroGNU
+from .utils import get_pixel_scale
+
 import multiprocessing
+
 
 class astrometry():
     '''
@@ -91,8 +98,8 @@ class astrometry():
             self.radius = 0.4
         elif telescope=='NTT':
             self.L = 0.2
-            self.H = 0.3
-            self.radius = 0.1
+            self.H = 0.26
+            self.radius = 0.05
 
         else:
             print('Telescope not defined.')
@@ -178,6 +185,58 @@ class structure():
 
     def set_masterdark(self,file):
         self.masterbias = file
+
+def deg_to_hms(ra_deg,dec_deg):
+    coord = SkyCoord(ra=ra_deg, dec=dec_deg, unit="deg")
+    return coord.to_string(style="hmsdms", precision=2, pad=True)
+
+def deg_to_dms(dec_deg):
+    coord = SkyCoord(ra=0, dec=dec_deg, unit="deg")
+    return coord.to_string(style="hmsdms", precision=2, pad=True)
+
+from astropy.wcs import WCS
+
+def get_corners(fileList):
+    '''
+    Get the equatorial coordinates (ra,dec) of the corners of 
+    the footprint of a list of images. Also returns the mean pixel scale.
+
+    Parameters
+    ----------
+        fileList : list
+            List of images.
+    
+    Returns
+    -------
+        min_ra, max_ra, min_dec, max_dec, scale : float
+            Minimum and maximum values of RA and Dec [deg] and 
+            mean pixel scale [pixel/arcsec].
+    '''
+    ras, decs, pixscales = [], [], []
+    for file in fileList:
+            header = fits.getheader(file)
+            wcs = WCS(header)
+            height, width = fits.getdata(file).shape
+            pixels_corners = np.array([[0, 0], [0, height], [width, height], [width, 0]])
+            ra_dec_corners = wcs.pixel_to_world_values(pixels_corners[:, 0], pixels_corners[:, 1])
+            ras.extend(ra_dec_corners[0])
+            decs.extend(ra_dec_corners[1])
+            pixscales.append(get_pixel_scale(header))
+
+    min_ra, max_ra = np.nanmin(ras), np.nanmax(ras)
+    min_dec, max_dec = np.nanmin(decs), np.nanmax(decs)
+
+    return min_ra, max_ra, min_dec, max_dec, np.nanmean(pixscales)
+
+def change_config(file, params, length=23):
+    with open(file,'r') as f:
+        lines = f.readlines()
+    for key,value in params.items():
+        for i,line in enumerate(lines):
+            if line.startswith(key+' '):
+                lines[i] = f'{key.ljust(length)} {value}\n'
+    with open(file,'w') as f:
+        f.writelines(lines)
 
 
 def stack(image_list, hdu=0, sigma=3, maxiters=3, dtype=np.float32):

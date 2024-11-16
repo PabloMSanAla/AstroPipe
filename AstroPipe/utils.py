@@ -296,7 +296,6 @@ def cutout(file, center, width, hdu=0, mode='image', out=None):
             Fits file name.
         center: tuple, optional
             Center of the cropped image in pixels (image) or in degrees (wcs).
-
         width: tuple
             Width of the cropped image in pixels (image) or in degrees (wcs).
         hdu: int, optional
@@ -310,6 +309,7 @@ def cutout(file, center, width, hdu=0, mode='image', out=None):
     -------
         out: str
             Cropped fits file name.
+            yes?
     '''
     
     data = fits.getdata(file,hdu)
@@ -318,7 +318,7 @@ def cutout(file, center, width, hdu=0, mode='image', out=None):
     if mode == 'wcs':
         sky = SkyCoord(center[0], center[1], unit='deg')
         wcs = WCS(header)
-        center = np.int64(wcs.world_to_pixel(sky))
+        center = np.int64(wcs.world_to_pixel(sky)).T[0]
         width = np.int64(width / utils.proj_plane_pixel_scales(wcs))
     elif mode == 'image':
         center = np.int64(center)
@@ -523,7 +523,7 @@ def derivative(x, y, n=4):
             slope = stats.linregress(x[i-n:i+n],y[i-n:i+n])[0]
         der[i] = slope
     deriv[index] = der
-    if any(~index): deriv[~index] = np.NaN
+    if any(~index): deriv[~index] = np.nan
     return deriv
 
 def flashprint(string):
