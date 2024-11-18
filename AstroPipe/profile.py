@@ -16,6 +16,7 @@ from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 from photutils.isophote import Ellipse, EllipseGeometry
 from photutils.aperture import RectangularAperture
 
+from autoprof.pipeline_steps import Isophote_Fit_FFT_Robust
 
 import matplotlib.patches as patch
 import matplotlib.pyplot as plt
@@ -25,8 +26,6 @@ from scipy import stats
 from scipy.ndimage import median_filter
 from scipy.signal import medfilt, argrelextrema
 from scipy.interpolate import interp1d
-
-
 
 from lmfit.models import GaussianModel
 
@@ -749,24 +748,6 @@ def get_surface_brightness(rad, intensity,  intensitystd, bkg, bkgstd, pixscale,
     lowerr[lowerr>mag] = mag[lowerr>mag] - maxdiff
     return mag, upperr, lowerr
 
-def surface_photometry(data, mask, center, growth_rate=1.03,
-                        plot=None, verbose=False):
-    '''
-    Function that analyses the surface photometry of a galaxy image.
-    TODO:It will:
-        (1) Compute the morphological parameters, ellipticity and positon angle
-        (2) Compute the background and radius where it reaches it
-        (3) Compute three radial profiles:
-            (3.1) Variable ishophotal radial profile
-            (3.2) Fixed Elliptical radial profile
-            (3.3) Rectangular radial profile
-        (4) Small analysis to improve the profiles 
-        (5) Returns a table with the results
-    
-    '''
-    table = []
-    return table
-
 
 def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03, weight=None,
                         plot=None, save=None):
@@ -1150,7 +1131,7 @@ def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, v
     Combine with current method.
 
     TODO: give option of sigma image to do statistical comparison of 
-    value optain with this, to see if the are of the same order, if not
+    value obtained with this, to see if the are of the same order, if not
     give warning.
 
     TODO: What is the best estimation of the uncertainty of the background
@@ -1364,6 +1345,74 @@ Background = {localsky:.3e} +- {localsky_std:.3e}
     return aper_bkg, localsky_std, float(np.nanmax([rad[-1],maxr]))
 
 
+def autoprof_isophote_photometry(data, center, pa_init, eps_init, growth=0.05,
+                        fit_limit=2, smooth=1, background = 0, bkgstd = None, psf=1):
+    ''' Autoprof wraper of Isophote_Fit_FFT_Robust to use within AstroPipe. 
+    Given an image and its morphological parameters, fits ellitpical regions 
+    to isophotes and returns the radial profile of the galaxy.
+    
+    PARAMETERS
+    ----------
+        data : array_like
+            2D array with the image data.
+        center : tuple
+            (x,y) coordinates of the center of the galaxy [pixels].
+        pa_init : float
+            Initial position angle of the galaxy [degrees].
+        eps_init : float
+            Initial ellipticity of the galaxy.
+        growth : float, optional
+            Growth rate of the isophotes. The default is 0.05.
+        fit_limit : float, optional
+            Limit of the fit. The default is 2. (lower values
+            will fit more isophotes). "ap_fit_limit" in the options.
+        smooth : float, optional
+            Smoothing factor. The default is 1. Larger values will
+            fit smoother isophotes. "ap_regularize_scale" in the options.
+        background : float, optional
+            Background level. The default is None.
+        bkgstd : float, optional
+            Background noise level. The default is None.
+        psf : float, optional
+            Point spread function full width at half maximum. The default is 1.
+    
+    RETURNS
+    -------
+        profile : AstroPipe.profile.Profile
+            Object with the radial profile of the galaxy.
+    '''
+    
+    # AutoProf required options 
+    options = {
+    "ap_scale": growth, "ap_fit_limit": fit_limit, "ap_regularize_scale": smooth,
+    "ap_isofit_robustclip": 0.15, "ap_isofit_losscoefs": (2,),
+    "ap_isofit_superellipse": False, "ap_isofit_fitcoefs": (2, 4),  
+    "ap_isofit_fitcoefs_FFTinit": True, "ap_isofit_perturbscale_ellip": 0.03,
+    "ap_isofit_perturbscale_pa": 0.06, "ap_isofit_iterlimitmax": 300,
+    "ap_isofit_iterlimitmin": 0, "ap_isofit_iterstopnochange": 3,
+    "ap_doplot": False,  "ap_name": "GalaxyIsophoteFit"}
+    
+    mask = data.mask if hasattr(data,'mask') else np.zeros_like(data)
+    if bkgstd is None: _,_,bkgstd = sigma_clipped_stats(data, mask=mask)
+
+    results = { "background": 0, "background noise": bkgstd,
+    "psf fwhm": psf, "init ellip": eps_init,
+    "center": {'x':center[0],'y':center[1]}, 
+    "init pa": pa_init * np.pi / 180, "mask": mask }    
+
+
+    _, results = Isophote_Fit_FFT_Robust(data, results, options)
+
+    keys = ['fit ellip', 'fit pa', 'fit R',
+            'fit ellip_err', 'fit pa_err', 'auxfile fitlimit',
+            'fit Fmodes', 'fit Fmode A2', 'fit Fmode Phi2', 
+            'fit Fmode A4', 'fit Fmode Phi4']
+
+    tab = Table(results, names=keys)
+    tab['x'] = center[0]*np.ones_like(tab['fit R'])
+    tab['y'] = center[1]*np.ones_like(tab['fit R'])
+    
+    return tab
 
 def res_sum_squares(dmdr, cog, slope, abcissa):
 
