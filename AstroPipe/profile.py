@@ -296,6 +296,7 @@ class Profile:
         self.y = np.concatenate((self.y, new_prof.y[2:]))
         self.flux = np.concatenate((self.flux, new_prof.flux[2:]))
         self.fluxstd = np.concatenate((self.fluxstd, new_prof.fluxstd[2:]))
+        self.npixels = np.concatenate((self.npixels, new_prof.npixels[2:]))
         self.brightness()
     
     def remove_nans(self):
@@ -362,7 +363,7 @@ class Profile:
         if sky is None: sky = self.bkg
 
         sma = self.rad
-        tflux = self.flux - self.npixels*sky
+        tflux = np.cumsum(self.flux - self.npixels*sky)
         mags = -2.5*np.log10(tflux) + self.zp
 
         return sma, mags
@@ -830,8 +831,8 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03, weig
         if np.isnan(profile.intstd[i]): profile.intstd[i] = profile.intstd[i-1] 
         
         # integrated photometry 
-        profile.npixels[i] =  profile.npixels[i-1] + np.size(data.data[index]) + np.sum(maskinside)
-        profile.flux[i] =  profile.flux[i-1] + np.nansum(data.data[index]) + np.nanmax([0,profile.int[i]*np.sum(maskinside)])
+        profile.npixels[i] = np.size(data.data[index]) + np.sum(maskinside) # + profile.npixels[i-1]
+        profile.flux[i] = np.nansum(data.data[index]) + np.nanmax([0,profile.int[i]*np.sum(maskinside)]) # + profile.flux[i-1] 
         profile.fluxstd[i] = np.sqrt(profile.fluxstd[i-1]**2 +  (np.sqrt(profile.npixels[i-1])*profile.intstd[i-1])**2)
 
     if plot is not None:
