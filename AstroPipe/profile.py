@@ -1408,7 +1408,12 @@ def autoprof_isophote_photometry(data, center, pa_init, eps_init, growth=0.05,
             'fit Fmodes', 'fit Fmode A2', 'fit Fmode Phi2', 
             'fit Fmode A4', 'fit Fmode Phi4']
 
-    tab = Table(results, names=keys)
+    keys_to_remove = ['auxfile fitlimit', 'fit Fmodes']
+    for key in keys_to_remove:
+        if key in results:
+            del results[key]
+
+    tab = Table(results)
     tab['x'] = center[0]*np.ones_like(tab['fit R'])
     tab['y'] = center[1]*np.ones_like(tab['fit R'])
     
