@@ -698,7 +698,7 @@ def plot_profile(radius, mu, pa, eps, mupper=None, mlower=None, axes=None, color
     elif mlower is not None: axmu.plot(radius, mlower, color=color, ls='--')
     
     axmu.set_ylabel('$\mu\,[\mathrm{mag\,arcsec}^{-2}]$',fontsize=14,labelpad=3)
-    axmu.invert_yaxis()
+    if axes is None: axmu.invert_yaxis()
 
     # Positional Angle plot
     pa[pa>180] = pa[pa>180] - 180

@@ -233,10 +233,8 @@ def morphology(binary):
     arguments = np.argwhere(binary)
     xdist = np.nanmax(arguments[:,1]) -  np.nanmin(arguments[:,1])
     ydist = np.nanmax(arguments[:,0]) -  np.nanmin(arguments[:,0]) 
-    sma_x = xdist / np.cos(angle*np.pi/180)
-    sma_y = ydist / np.sin(angle*np.pi/180)
-    sma = np.nanmax([sma_x,sma_y])/2
-
+    sma = np.sqrt(xdist**2 + ydist**2)/2
+    
     return angle,sma,eps
 
 def rebin(arr, new_shape):
