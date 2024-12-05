@@ -68,6 +68,7 @@ Thumbs.db
 *.fits
 
 *.jpg
+*csv
 *.xml
 *laboratory*
 *gui*

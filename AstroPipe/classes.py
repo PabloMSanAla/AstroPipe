@@ -544,7 +544,7 @@ class AstroGNU():
         self.loc = loc
         self.method = 'AstroGNU'
 
-    def noisechisel(self, config='', keep=False):
+    def noisechisel(self, config='', keep=False, verbose=True):
         
         self.nc_file  = join(self.directory,self.name+'_nc.fits')
         
@@ -552,6 +552,7 @@ class AstroGNU():
         self.nc_cmd = f'astnoisechisel {self.file} -h{self.hdu} {self.nc_config} -o{self.nc_file} -q'
         self.nc_cmd = join(self.loc,self.nc_cmd)
 
+        if verbose: print(self.nc_cmd)
         os.system(self.nc_cmd)
         
         self.detections = fits.getdata(self.nc_file,'DETECTIONS')
