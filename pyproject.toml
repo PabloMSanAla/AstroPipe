@@ -1,0 +1,19 @@
+[project]
+name = "astropipe"
+version = "0.1.0"
+description = "Astronomical library to deal with surface photometry of galaxies."
+authors = [
+    {name = "Pablo M. Sánchez-Alarcón"}
+]
+license = {text = "C.C"}
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy (>=1.26.4,<2.0.0)",
+    "matplotlib (>=3.9.2,<4.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

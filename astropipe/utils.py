@@ -54,7 +54,7 @@ def mag_limit(std, Zp=22.5, omega=10, scale=0.33, n=3):
     return -2.5 * np.log10(n * std / (scale * omega)) + Zp
 
 def check_print(message):
-    print(colored('AstroPipe', 'green')+': '+ message)
+    print(colored('astropipe', 'green')+': '+ message)
 
 def redshift_to_kpc(redshift,H0=70,Tcmb0 = 2.725, Om0=0.3):
     '''Function that given a redshift returns the physical distance

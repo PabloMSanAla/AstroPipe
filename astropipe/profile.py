@@ -1,6 +1,6 @@
 
-from AstroPipe import utils as ut
-from AstroPipe.plotting import show
+from astropipe import utils as ut
+from astropipe.plotting import show
 
 import numpy as np 
 import os
@@ -132,7 +132,7 @@ class Profile:
         
         Returns
         -------
-            profile : AstroPipe.sbprofile.Profile
+            profile : astropipe.sbprofile.Profile
                 Profile object with the radial profile.
         '''
         if array is str: array = fits.getdata(array, hdu)
@@ -780,7 +780,7 @@ def elliptical_radial_profile(data, rad, center, pa, eps, growth_rate=1.03, weig
     
     Returns
     -------
-        profile : AstroPipe.sbprofile.Profile
+        profile : astropipe.sbprofile.Profile
             Profile object with the radial profile.
    '''
 
@@ -877,7 +877,7 @@ def isophotal_photometry(data, center, pa, eps, reff,  max_r=None, growth_rate=1
     
     Returns
     -------
-        profile : AstroPipe.sbprofile.Profile
+        profile : astropipe.sbprofile.Profile
             Profile object with the radial profile.
    '''
     pa = pa * np.pi/180
@@ -946,7 +946,7 @@ def rectangular_radial_profile(data, rad, center, pa, width=2, growth_rate=1.01,
     
     Returns
     -------
-        profile : AstroPipe.sbprofile.Profile
+        profile : astropipe.sbprofile.Profile
             Profile object with the radial profile.
    '''
 
@@ -1347,7 +1347,7 @@ Background = {localsky:.3e} +- {localsky_std:.3e}
 
 def autoprof_isophote_photometry(data, center, pa_init, eps_init, growth=0.05,
                         fit_limit=2, smooth=1, background = 0, bkgstd = None, psf=1):
-    ''' Autoprof wraper of Isophote_Fit_FFT_Robust to use within AstroPipe. 
+    ''' Autoprof wraper of Isophote_Fit_FFT_Robust to use within astropipe. 
     Given an image and its morphological parameters, fits ellitpical regions 
     to isophotes and returns the radial profile of the galaxy.
     
@@ -1378,7 +1378,7 @@ def autoprof_isophote_photometry(data, center, pa_init, eps_init, growth=0.05,
     
     RETURNS
     -------
-        profile : AstroPipe.profile.Profile
+        profile : astropipe.profile.Profile
             Object with the radial profile of the galaxy.
     '''
     

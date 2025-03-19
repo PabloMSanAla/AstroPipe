@@ -157,10 +157,10 @@ def sexmask(IMG, folders, fwhm=None, plot=False, temp=False):
 
     Parameters
     ----------
-        IMG : AstroPipe Image object
+        IMG : astropipe Image object
             Class object containing the image data
 
-        folders : AstroPipe Directories object
+        folders : astropipe Directories object
             Class object containing the directories of the project
 
         fwhm : float, optional
@@ -378,10 +378,10 @@ def mtomask(IMG, folders, plot=False):
 
     Parameters
     ----------
-        IMG : AstroPipe Image object
+        IMG : astropipe Image object
             Class object containing the image data
 
-        folders : AstroPipe Directories object
+        folders : astropipe Directories object
             Class object containing the directories of the project
 
         plot : bool, optional

@@ -2,8 +2,8 @@
 Modules for process Isaac Newton Telescope images. 
 '''
 
-import AstroPipe.calibration as cal
-from AstroPipe.classes import AstroGNU
+import astropipe.calibration as cal
+from astropipe.classes import AstroGNU
 
 import numpy as np
 from astropy.io import fits

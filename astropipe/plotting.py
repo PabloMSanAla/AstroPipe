@@ -1,4 +1,4 @@
-import AstroPipe.utils as ut
+import astropipe.utils as ut
 import matplotlib.pyplot as plt
 import matplotlib 
 import numpy as np
@@ -260,9 +260,9 @@ def surface_figure(image, profile, out=None, mumax=None, radmax=None, **kwargs):
     
     Parameters
     ----------
-        image : AstroPipe.Image
+        image : astropipe.Image
             Image object to plot.
-        profile : AstroPipe.Profile
+        profile : astropipe.Profile
             Profile object to plot.
         out : str, optional
             Path to save the figure. If None, the figure will not be saved.
