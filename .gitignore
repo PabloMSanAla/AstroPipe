@@ -80,3 +80,6 @@ gui-Andreu/*
 venv/*
 local/*
 
+# Poetry #
+##########
+poetry.lock

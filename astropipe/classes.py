@@ -4,16 +4,12 @@ from astropy.wcs import WCS,utils
 from astropy.coordinates import SkyCoord
 from astropy.wcs.utils import skycoord_to_pixel, pixel_to_skycoord
 from astropy.table import Table
-from astropy.stats import sigma_clipped_stats
-from astropy.visualization import ImageNormalize, LogStretch
 
 from datetime import datetime
 import numpy as np
 import numpy.ma as ma
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
-import matplotlib
 import os
 from os.path import join
 
