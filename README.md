@@ -14,7 +14,7 @@ PROJECT LOGO
     <img src="fabada-logo.svg" alt="Logo" width="80" height="80">
   </a> -->
 
-<h3 align="center">AstroPipe</h3>
+<h3 align="center">astropipe</h3>
 <h3 align="center">Pipeline mainly focus on data analysis of Astronomical images.</h3>
 
   <p align="center">
