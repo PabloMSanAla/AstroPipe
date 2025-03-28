@@ -4,16 +4,13 @@ from astropy.wcs import WCS,utils
 from astropy.coordinates import SkyCoord
 from astropy.wcs.utils import skycoord_to_pixel, pixel_to_skycoord
 from astropy.table import Table
-from astropy.stats import sigma_clipped_stats
-from astropy.visualization import ImageNormalize, LogStretch
 
 from datetime import datetime
 import numpy as np
 import numpy.ma as ma
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
-import matplotlib
+import platform
 import os
 from os.path import join
 
@@ -29,10 +26,10 @@ import mtolib.main as mto
 
 from .plotting import noise_hist, make_cmap, show
 from .utils import *
-from .profile import background_estimation, isophotal_photometry, elliptical_radial_profile
+from .profile import background_estimation_euclid, isophotal_photometry, elliptical_radial_profile
 
-import AstroPipe
-path_to_package = os.path.dirname(AstroPipe.__file__)
+import astropipe
+path_to_package = os.path.dirname(astropipe.__file__)
 
 
 import sys
@@ -165,7 +162,7 @@ class Image:
         
     def crop(self, center, width=(500,500)):
         '''
-        Use the AstroPipe.utils.crop function to crop the image
+        Use the astropipe.utils.crop function to crop the image
         given a center and width. It updates the data and header 
         attributes of the class preserving the WCS information 
         It also saves the parameters of the cropping procedoure 
@@ -218,7 +215,7 @@ class Image:
         
         Returns
         -------
-            profile : AstroPipe.profile.Profile
+            profile : astropipe.profile.Profile
                 Radial profile of the object.'''
 
         max_r = 2*self.bkgrad if max_r is None else max_r
@@ -256,7 +253,7 @@ class Image:
         
         Returns
         -------
-            profile : AstroPipe.profile.Profile
+            profile : astropipe.profile.Profile
                 Radial profile of the object.'''
         
         profile = isophotal_photometry(self.data, self.pix, self.pa, self.eps, self.reff,
@@ -288,10 +285,11 @@ class Image:
     def get_background(self, growth_rate=1.05, out=None):
         '''
         Calculates the local background value around object using method
-        implemented in AstroPipe.profile.background_estimation
+        implemented in astropipe.profile.background_estimation
         '''
-        self.bkg, self.bkgstd, self.bkgrad = background_estimation(self.data, self.pix, self.pa, self.eps, 
-                                                                        out=out, growth_rate=growth_rate)
+        results = background_estimation_euclid(self.data, self.pix, self.pa, self.eps, 
+                                                                        plot=out, growth_rate=growth_rate)
+        self.bkg, self.bkgstd, self.bkgrad  = results['ellip_bkg'], results['rect_bkgstd'], results['bkgrad']
         
     def get_morphology(self, nsigma=1):
         '''Calculates the morphological parameters of the object
@@ -400,7 +398,12 @@ class SExtractor:
         if config is not None:
             self.add_config(config)
 
-        if sexpath is None: sexpath = 'sex'
+        if sexpath is None: 
+            system = platform.system()
+            if system=='Linux':
+                sexpath = 'source-extractor'
+            else:
+                sexpath = 'sex'
         self.sexpath = sexpath
 
     def add_params(self, p_list):
@@ -525,7 +528,7 @@ class MTObjects():
 
 
 class AstroGNU():
-    def __init__(self, data, hdu=0, dir='', loc='/opt/local/bin/'):
+    def __init__(self, data, hdu=0, dir='', loc=''):
         if isinstance(data, str):
             self.file = data
             self.temp = False
@@ -604,7 +607,7 @@ class Directories():
         '''Once initialize it creates the structures of directories where 
          the products will be save.'''
         if not path: path = os.path.dirname(name)
-        self.out = join(path,'AstroPipe_'+name)
+        self.out = join(path,'astropipe_'+name)
         if not os.path.exists(self.out) and create:
              os.mkdir(self.out)
         self.temp = join(self.out,'temp_'+name)
@@ -636,7 +639,7 @@ class log_class:
         f = open(self.name, "w+")
         f.write(
             75 * "=" + "\n"
-            "AstroPipe Log file" + "\n" + 75 * "=" + "\n"
+            "astropipe Log file" + "\n" + 75 * "=" + "\n"
         )
         f.close()
 

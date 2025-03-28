@@ -1,7 +1,6 @@
 import os
 import sys
 import numpy as np
-from termcolor import colored
 from astropy.cosmology import FlatLambdaCDM
 import astropy.units as u
 import cv2
@@ -18,7 +17,6 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from scipy.signal import convolve2d
-# from .masking import gaussian
 
 from scipy.signal import argrelextrema
 from scipy import stats
@@ -52,9 +50,6 @@ def mag_limit(std, Zp=22.5, omega=10, scale=0.33, n=3):
             Surface brightness limit of the image.
     '''
     return -2.5 * np.log10(n * std / (scale * omega)) + Zp
-
-def check_print(message):
-    print(colored('AstroPipe', 'green')+': '+ message)
 
 def redshift_to_kpc(redshift,H0=70,Tcmb0 = 2.725, Om0=0.3):
     '''Function that given a redshift returns the physical distance

@@ -1,5 +1,4 @@
 import glob
-from re import S 
 
 import numpy as np
 import os
@@ -14,8 +13,6 @@ import astropy.units as u
 
 from .classes import AstroGNU
 from .utils import get_pixel_scale
-
-import multiprocessing
 
 
 class astrometry():

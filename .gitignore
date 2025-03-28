@@ -79,4 +79,8 @@ gui/*
 gui-Andreu/*
 venv/*
 local/*
+demos/temp/*
 
+# Poetry #
+##########
+poetry.lock
