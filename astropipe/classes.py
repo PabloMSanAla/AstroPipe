@@ -10,6 +10,7 @@ import numpy as np
 import numpy.ma as ma
 
 import matplotlib.pyplot as plt
+import platform
 import os
 from os.path import join
 
@@ -25,7 +26,7 @@ import mtolib.main as mto
 
 from .plotting import noise_hist, make_cmap, show
 from .utils import *
-from .profile import background_estimation, isophotal_photometry, elliptical_radial_profile
+from .profile import background_estimation_euclid, isophotal_photometry, elliptical_radial_profile
 
 import astropipe
 path_to_package = os.path.dirname(astropipe.__file__)
@@ -286,8 +287,9 @@ class Image:
         Calculates the local background value around object using method
         implemented in astropipe.profile.background_estimation
         '''
-        self.bkg, self.bkgstd, self.bkgrad = background_estimation(self.data, self.pix, self.pa, self.eps, 
-                                                                        out=out, growth_rate=growth_rate)
+        results = background_estimation_euclid(self.data, self.pix, self.pa, self.eps, 
+                                                                        plot=out, growth_rate=growth_rate)
+        self.bkg, self.bkgstd, self.bkgrad  = results['ellip_bkg'], results['rect_bkgstd'], results['bkgrad']
         
     def get_morphology(self, nsigma=1):
         '''Calculates the morphological parameters of the object
@@ -396,7 +398,12 @@ class SExtractor:
         if config is not None:
             self.add_config(config)
 
-        if sexpath is None: sexpath = 'sex'
+        if sexpath is None: 
+            system = platform.system()
+            if system=='Linux':
+                sexpath = 'source-extractor'
+            else:
+                sexpath = 'sex'
         self.sexpath = sexpath
 
     def add_params(self, p_list):
@@ -521,7 +528,7 @@ class MTObjects():
 
 
 class AstroGNU():
-    def __init__(self, data, hdu=0, dir='', loc='/opt/local/bin/'):
+    def __init__(self, data, hdu=0, dir='', loc=''):
         if isinstance(data, str):
             self.file = data
             self.temp = False

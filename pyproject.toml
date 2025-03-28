@@ -27,7 +27,8 @@ dependencies = [
     "screeninfo (>=0.8.1,<0.9.0)",
     "urllib3 (>=2.2.3,<3.0.0)",
     "wget (>=3.2,<4.0)",
-    "sewpy @ git+https://github.com/megalut/sewpy.git"
+    "sewpy @ git+https://github.com/megalut/sewpy.git",
+    "pyqt5 (>=5.15.11,<6.0.0)"
         
 ]
 

@@ -1,6 +1,6 @@
 
 from astropipe import utils as ut
-from astropipe.plotting import show
+from astropipe.plotting import show, rectangle_add_patches, ellipse_points
 
 import numpy as np 
 import os
@@ -24,7 +24,8 @@ from matplotlib.colors import LogNorm
 
 from scipy import stats
 from scipy.ndimage import median_filter
-from scipy.signal import medfilt, argrelextrema
+from scipy.signal import medfilt, argrelextrema, savgol_filter
+
 from scipy.interpolate import interp1d
 
 from lmfit.models import GaussianModel
@@ -1096,6 +1097,155 @@ def random_rectangular_boxes(center, pa, sma, eps, n=5, wbox=30):
     rectangles = RectangularAperture(centers.T,wbox, wbox)
     return rectangles
 
+def background_estimation_euclid(data, center, pa, eps, init=1, growth_rate=1.04, seed=1234323, plot=None):
+    ''' Estimate background'''
+
+    rng = np.random.default_rng(seed)
+
+    # Get major axes coordinates at each pixel
+    smacoord = create_ellipse_meshgrid(eps, pa, center, data.shape)
+    x = smacoord.flatten()[~data.mask.flatten()]
+    y = data.flatten()[~data.mask.flatten()]
+
+    # Create radial bines
+    alpha = np.log10(growth_rate)
+    size = np.log10(np.nanmax(data.shape))//alpha + 2
+    rad = 10**(alpha*np.arange(0,size))
+
+    # Get intensity profile
+    _,intensity,intensity_err = sigma_clipped_stats(create_matrix_by_bins(x,y,rad),axis=1)
+    intsmooth = savgol_filter(intensity, 10, 1)
+    sma = (rad[:-1]+rad[1:])/2
+    
+    # Get derivative and background radius
+    n_sigma = 3
+    dIdr = ut.derivative(sma,intensity)
+    exp_crit = np.abs(intensity/dIdr)
+    exp_crit_smooth = np.abs(intsmooth/ut.derivative(sma,intsmooth))
+    n= np.log10(np.nanmax(sma))//1
+    exp_crit_norm = (10**n)*exp_crit_smooth/(10**n+sma)
+    _,med_exp,std_exp = sigma_clipped_stats(exp_crit_norm)
+    bkgrad = sma[(exp_crit_norm>med_exp+n_sigma*std_exp)*(sma>init)][0]//1
+
+    # Measure background value around an elliptical annnulai
+    scale = 1.1
+    sky_ellip_aper = data[(smacoord>bkgrad)*(smacoord<=scale*bkgrad)*(~data.mask)].flatten()
+
+    # Measure the background using the elliptical annulus
+    _, gauss_fit = find_mode(sky_ellip_aper)  
+    ellip_bkg = gauss_fit.params['center'].value
+    ellip_bkgstd = gauss_fit.params['sigma'].value/np.sqrt(sky_ellip_aper.size)
+    
+    # Renctangular Apertures
+    nboxes = 20 
+    boxWidth = np.int64(bkgrad*np.pi/nboxes)
+    boxWidth = 100 if boxWidth>100 else boxWidth
+    boxWidth = 20 if boxWidth<20 else boxWidth
+    halfBoxWidth = boxWidth//2
+    nboxes =  np.int64(bkgrad*np.pi/boxWidth)
+
+    rms = np.array([])
+    medians = np.array([])
+    stds = np.array([])
+    cxs,cys=np.array([]),np.array([])
+    newmask = ~(np.zeros(data.mask.shape, dtype=bool) + (smacoord>bkgrad)*(smacoord<=(scale*bkgrad+boxWidth))*~data.mask)
+    good_coords = np.where(~newmask)
+
+    if good_coords[0].size < nboxes*boxWidth:
+        newmask = np.zeros(data.mask.shape, dtype=bool) + (smacoord<scale*bkgrad)*(smacoord>=(scale*bkgrad+4*boxWidth))
+        good_coords = np.where(~newmask)
+        raise Warning(f'Not enough unmasked pixels to measure noise in {nboxes} boxes.'
+                      f' Only {good_coords[0].size} unmasked pixels available.')
+        
+    
+    # Add edges to avoid border effects
+    edge_mask = np.zeros(data.shape, dtype=bool) + True
+    edge_mask[halfBoxWidth: -halfBoxWidth, halfBoxWidth: -halfBoxWidth] = False
+    newmask[edge_mask] = True
+    
+    # Measure noise in nboxes
+    for i in range(nboxes):
+        idx = rng.choice(np.arange(len(good_coords[0])))
+        ceny, cenx = good_coords[0][idx], good_coords[1][idx]
+        box = data[ceny-halfBoxWidth:ceny+halfBoxWidth,
+                   cenx-halfBoxWidth:cenx+halfBoxWidth]
+        maskbox = data.mask[ceny-halfBoxWidth:ceny+halfBoxWidth,
+                          cenx-halfBoxWidth:cenx+halfBoxWidth]
+        rms = np.append(rms, np.sqrt(np.nansum(box[~maskbox]**2)/np.nansum(np.isfinite(box) * ~maskbox)))
+        _,med,std = sigma_clipped_stats(box)
+        medians = np.append(medians, med)
+        stds = np.append(stds, std)
+        newmask[ceny-halfBoxWidth:ceny+halfBoxWidth,
+                   cenx-halfBoxWidth:cenx+halfBoxWidth] = True
+        good_coords = np.where(~newmask)
+        cxs = np.append(cxs,cenx)
+        cys = np.append(cys,ceny)
+        
+    
+    avRms = np.nanmean(rms)
+    sbLim = np.nanstd(medians)
+    rect_bkg= np.nanmedian(medians)
+    rect_bkgstd = np.nanstd(medians)/np.sqrt(np.sum(~np.isnan(medians)))
+
+    results = {'bkgrad' : bkgrad, 'avRms' : avRms, 
+            'sbLim' : sbLim, 'ellip_bkg' : ellip_bkg, 'rect_bkg' : rect_bkg,
+            'ellip_bkgstd' : ellip_bkgstd, 'rect_bkgstd' : rect_bkgstd,
+            'nboxes':nboxes, 'boxWidth':boxWidth,
+            'center': [center[0],center[1]], 'pa': pa, 'eps': eps, 'init': init,
+            'cxs' : cxs.astype(np.int16).T, 'cys' : cys.astype(np.int16).T, 
+            'rms' : rms.T, 'medians' : medians.T, 'stds' : stds.T
+            }
+    print(results)
+    
+    if plot != None:
+        fig = plt.figure(figsize=(6,9))
+        axim = plt.subplot2grid((6,2),(0,0),rowspan=3,colspan=2)
+        axprof = plt.subplot2grid((6,2),(3,0),rowspan=2,colspan=2)
+        axdprof = plt.subplot2grid((6,2),(5,0),colspan=2,sharex=axprof)
+        
+        vmax = 10**(0.4*(19.6-24))
+        vmin = 10**(0.4*(19.6-29.5))
+        norm = LogNorm(vmax=vmax, vmin=vmin)
+        im = axim.imshow(data, norm=norm, cmap='nipy_spectral', origin='lower', interpolation='none')
+        fig.colorbar(im, ax=axim)
+        _ = rectangle_add_patches(np.array([results['cxs'],results['cys']]),results['boxWidth'],results['boxWidth'],axim,
+                            linewidth=2, edgecolor='black', facecolor='none')
+        axim.plot(*ellipse_points(results['center'], bkgrad, bkgrad*(1-results['eps']), results['pa'], num_points=300),c='k',ls='--',lw=2)
+        axim.plot(*ellipse_points(results['center'], 1.1*bkgrad, 1.1*bkgrad*(1-results['eps']), results['pa'], num_points=300),c='k',ls='--',lw=2)
+        
+        axprof.scatter(x,y,color='gray',s=0.5,alpha=0.1)
+        axprof.plot(sma,intensity,'ro')
+        axprof.plot(sma,intsmooth,'g-')
+
+        axprof.axhline(results['ellip_bkg'],c='k',ls='--', label='Elliptical')
+        axprof.axhline(results['rect_bkg'],c='k',ls=':', label='Rectangular')
+        axprof.plot(smacoord[results['cys'],results['cxs']],
+            results['medians'],'s',ms=10, markeredgecolor='black', markerfacecolor='none',lw=6)
+        axprof.axvline(results['bkgrad'],c='k',ls='-.', label='Radius')
+        axprof.legend(loc='upper right',ncols=3, fontsize=12,frameon=False)
+
+        axprof.set_yscale('log')
+        axprof.set_ylim([results['ellip_bkg']-5*results['rect_bkgstd'], np.nanmax(intensity)])
+        axprof.set_ylabel('I [Mjy]',fontsize=12)
+
+
+        axim.set_xlim([results['center'][0]-bkgrad*1.5, results['center'][0]+bkgrad*1.5])
+        axim.set_ylim([results['center'][1]-bkgrad*1.5, results['center'][1]+bkgrad*1.5])
+        axprof.set_xlim([-0.03*bkgrad,1.5*bkgrad])
+        axprof.set_ylim([results['rect_bkg']*0.03, np.nanmax(intensity)*1.1])
+
+        axdprof.plot(sma,exp_crit,'r')
+        axdprof.plot(sma,exp_crit_norm,'g')
+        axdprof.axhline(med_exp,c='k',ls=':')
+        axdprof.axhline(med_exp+5*std_exp,c='k',ls='--')
+        axdprof.axvline(results['bkgrad'],c='k',ls='-.')
+        axdprof.set_xlabel('semi-major axis [pixels]',fontsize=12)
+        axdprof.set_ylabel(r'$|$I/dI/dr$|$',fontsize=12)
+        axdprof.set_yscale('log')
+        fig.tight_layout()
+        fig.savefig(plot, dpi=300, bbox_inches='tight', pad_inches=0.1)
+        
+    return results
 
 def background_estimation(data, center, pa, eps, growth_rate = 1.03, out=None, verbose=False):
     '''
@@ -1819,166 +1969,106 @@ def break_estimation(radius, mu, rms, skyrms=0,
 
     return centers
 
-
-
-import numpy as np
-
-from photutils.isophote.geometry import EllipseGeometry
-
-__all__ = ['build_ellipse_model']
-
-
-def build_ellipse_model(shape, isolist,intensity=None, fill=0., high_harmonics=False):
+def create_ellipse_meshgrid(eps, pa, center, grid_shape):
     """
-    Build a model elliptical galaxy image from a list of isophotes.
+    Create meshgrid of semimajor axis following an elliptical shape.
+    
+    Parameters:
+        eps (float): Ellipticity of the ellipse (0 <= e < 1).
+        pa (float): Position angle of the ellipse in degrees (counterclockwise from x-axis).
+        center (tuple): Center of the ellipse (cx, cy).
+        grid_shape (tuple): Shape of the meshgrid (height, width).
+    
+    Returns:
+        x_coords (2D array): X-coordinates of the meshgrid.
+        y_coords (2D array): Y-coordinates of the meshgrid.
+        mask (2D array): Boolean mask where `True` indicates points inside the ellipse.
+    """    
+    # Center of the ellipse
+    cx, cy = center
 
-    For each ellipse in the input isophote list the algorithm fills the
-    output image array with the corresponding isophotal intensity.
-    Pixels in the output array are in general only partially covered by
-    the isophote "pixel".  The algorithm takes care of this partial
-    pixel coverage by keeping track of how much intensity was added to
-    each pixel by storing the partial area information in an auxiliary
-    array.  The information in this array is then used to normalize the
-    pixel intensities.
+    # Create a regular meshgrid
+    height, width = grid_shape
+    x, y = np.meshgrid(np.arange(width), np.arange(height))
+
+    # Shift the grid to the ellipse center
+    x_shifted = x - cx
+    y_shifted = y - cy
+
+    # Convert position angle to radians
+    pa_rad = np.radians(pa)
+
+    # Rotate the coordinates by the position angle
+    x_rot = x_shifted * np.cos(pa_rad) + y_shifted * np.sin(pa_rad)
+    y_rot = -x_shifted * np.sin(pa_rad) + y_shifted * np.cos(pa_rad)
+
+    # Ellipse equation
+    sma = np.sqrt(x_rot**2 + y_rot**2 / ((1-eps)**2))
+
+    return sma
+
+
+def create_matrix_by_bins(x, y, bins):
+    '''
+    Create a matrix z where each row contains values of y corresponding to ranges of x given by bins.
 
     Parameters
     ----------
-    shape : 2-tuple
-        The (ny, nx) shape of the array used to generate the input
-        ``isolist``.
-
-    isolist : `~photutils.isophote.IsophoteList` instance
-        The isophote list created by the `~photutils.isophote.Ellipse`
-        class.
-
-    fill : float, optional
-        The constant value to fill empty pixels. If an output pixel has
-        no contribution from any isophote, it will be assigned this
-        value.  The default is 0.
-
-    high_harmonics : bool, optional
-        Whether to add the higher-order harmonics (i.e., ``a3``, ``b3``,
-        ``a4``, and ``b4``; see `~photutils.isophote.Isophote` for
-        details) to the result.
+        x : array
+            x-axis values.
+        y : array
+            y-axis values.
+        bins : array
+            Bin edges.
 
     Returns
     -------
-    result : 2D `~numpy.ndarray`
-        The image with the model galaxy.
-    """
-    from scipy.interpolate import LSQUnivariateSpline
+        z : 2D array
+            Matrix where each row contains the values of y corresponding to each bin of x.
+            Rows with no values in the bin will be padded with NaN.
+    '''
+    # Ensure inputs are NumPy arrays
+    x = np.array(x)
+    y = np.array(y)
+    bins = np.array(bins)
 
-    # the target grid is spaced in 0.1 pixel intervals so as
-    # to ensure no gaps will result on the output array.
-    finely_spaced_sma = np.arange(isolist[0].sma, isolist[-1].sma, 0.1)
+    # Digitize x values into bin indices
+    bin_indices = np.digitize(x, bins) - 1  # Get bin indices (0-indexed)
 
-    if intensity is None: intensity = isolist.intens 
-    # interpolate ellipse parameters
+    # Create a mask for valid bin indices
+    valid_mask = (bin_indices >= 0) & (bin_indices < len(bins) - 1)
 
-    # End points must be discarded, but how many?
-    # This seems to work so far
-    nodes = isolist.sma[2:-2]
+    # Filter out invalid values
+    x = x[valid_mask]
+    y = y[valid_mask]
+    bin_indices = bin_indices[valid_mask]
 
-    intens_array = LSQUnivariateSpline(
-        isolist.sma, intensity, nodes)(finely_spaced_sma)
-    eps_array = LSQUnivariateSpline(
-        isolist.sma, isolist.eps, nodes)(finely_spaced_sma)
-    pa_array = LSQUnivariateSpline(
-        isolist.sma, isolist.pa, nodes)(finely_spaced_sma)
-    x0_array = LSQUnivariateSpline(
-        isolist.sma, isolist.x0, nodes)(finely_spaced_sma)
-    y0_array = LSQUnivariateSpline(
-        isolist.sma, isolist.y0, nodes)(finely_spaced_sma)
-    grad_array = LSQUnivariateSpline(
-        isolist.sma, isolist.grad, nodes)(finely_spaced_sma)
-    a3_array = LSQUnivariateSpline(
-        isolist.sma, isolist.a3, nodes)(finely_spaced_sma)
-    b3_array = LSQUnivariateSpline(
-        isolist.sma, isolist.b3, nodes)(finely_spaced_sma)
-    a4_array = LSQUnivariateSpline(
-        isolist.sma, isolist.a4, nodes)(finely_spaced_sma)
-    b4_array = LSQUnivariateSpline(
-        isolist.sma, isolist.b4, nodes)(finely_spaced_sma)
+    # Find the maximum number of elements in any bin
+    counts = np.bincount(bin_indices, minlength=len(bins) - 1)
+    max_count = counts.max()
 
-    # Return deviations from ellipticity to their original amplitude meaning
-    a3_array = -a3_array * grad_array * finely_spaced_sma
-    b3_array = -b3_array * grad_array * finely_spaced_sma
-    a4_array = -a4_array * grad_array * finely_spaced_sma
-    b4_array = -b4_array * grad_array * finely_spaced_sma
+    # Sort arrays 
+    sorting = np.argsort(bin_indices)
+    x = x[sorting]
+    y = y[sorting]
+    bin_indices = bin_indices[sorting]
+    col_indices = np.concatenate([np.arange(np.sum(bin_indices==b)) for b in np.unique(bin_indices) ])
 
-    # correct deviations cased by fluctuations in spline solution
-    eps_array[np.where(eps_array < 0.)] = 0.
+    # Create the output matrix
+    z = np.full((len(bins) - 1, np.nanmax(col_indices)+1), np.nan)  # Initialize with NaN
 
-    result = np.zeros(shape=shape)
-    weight = np.zeros(shape=shape)
+    # Fill the rows of the matrix with y values for each bin
+    z[bin_indices, col_indices] = y
 
-    eps_array[np.where(eps_array < 0.)] = 0.05
+    return z
 
-    # for each interpolated isophote, generate intensity values on the
-    # output image array
-    # for index in range(len(finely_spaced_sma)):
-    for index in range(1, len(finely_spaced_sma)):
-        sma0 = finely_spaced_sma[index]
-        eps = eps_array[index]
-        pa = pa_array[index]
-        x0 = x0_array[index]
-        y0 = y0_array[index]
-        geometry = EllipseGeometry(x0, y0, sma0, eps, pa)
 
-        intens = intens_array[index]
+def elliptical_profile_fast(data, rad, center, pa, eps):
 
-        # scan angles. Need to go a bit beyond full circle to ensure
-        # full coverage.
-        r = sma0
-        phi = 0.
-        while phi <= 2 * np.pi + geometry._phi_min:
-            # we might want to add the third and fourth harmonics
-            # to the basic isophotal intensity.
-            harm = 0.
-            if high_harmonics:
-                harm = (a3_array[index] * np.sin(3. * phi)
-                        + b3_array[index] * np.cos(3. * phi)
-                        + a4_array[index] * np.sin(4. * phi)
-                        + b4_array[index] * np.cos(4. * phi)) / 4.
+    x = create_ellipse_meshgrid(eps, pa, center, data.shape).flatten()[~data.mask.flatten()]
+    y = data.flatten()[~data.mask.flatten()]
 
-            # get image coordinates of (r, phi) pixel
-            x = r * np.cos(phi + pa) + x0
-            y = r * np.sin(phi + pa) + y0
-            i = int(x)
-            j = int(y)
-
-            if (i > 0 and i < shape[1] - 1 and j > 0 and j < shape[0] - 1):
-                # get fractional deviations relative to target array
-                fx = x - float(i)
-                fy = y - float(j)
-
-                # add up the isophote contribution to the overlapping pixels
-                result[j, i] += (intens + harm) * (1. - fy) * (1. - fx)
-                result[j, i + 1] += (intens + harm) * (1. - fy) * fx
-                result[j + 1, i] += (intens + harm) * fy * (1. - fx)
-                result[j + 1, i + 1] += (intens + harm) * fy * fx
-
-                # add up the fractional area contribution to the
-                # overlapping pixels
-                weight[j, i] += (1. - fy) * (1. - fx)
-                weight[j, i + 1] += (1. - fy) * fx
-                weight[j + 1, i] += fy * (1. - fx)
-                weight[j + 1, i + 1] += fy * fx
-
-                # step towards next pixel on ellipse
-                phi = max((phi + 0.75 / r), geometry._phi_min)
-                r = max(geometry.radius(phi), 0.5)
-            # if outside image boundaries, ignore.
-            else:
-                break
-
-    # zero weight values must be set to 1.
-    weight[np.where(weight <= 0.)] = 1.
-
-    # normalize
-    result /= weight
-
-    # fill value
-    result[np.where(result == 0.)] = fill
-
-    return result
+    z = create_matrix_by_bins(x,y,rad)
+    _,intensity,intensity_err = sigma_clipped_stats(z,axis=1)
+    
+    return intensity,intensity_err

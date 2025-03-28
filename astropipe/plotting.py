@@ -1,21 +1,31 @@
+import matplotlib 
 import astropipe.utils as ut
 import matplotlib.pyplot as plt
-import matplotlib 
-import numpy as np
+from matplotlib.figure import Figure
 from matplotlib.colors import LogNorm
+import matplotlib.patches as patches
+from matplotlib.widgets import RadioButtons,TextBox, Button
+from matplotlib.backend_bases import MouseButton
+
+import numpy as np
 from astropy.wcs import WCS
 import astropy.visualization as vis
-import matplotlib.patches as patches
 from astropy.table import Table
 from astropy.stats import sigma_clipped_stats
 
 from screeninfo import get_monitors
-from matplotlib.widgets import RadioButtons,TextBox, Button
-from matplotlib.backend_bases import MouseButton
 from photutils.aperture import CircularAperture
 from os.path import join
 import cv2
 from astropy.io import fits
+
+from PyQt5.QtWidgets import (
+    QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QSpinBox, QLabel, QRadioButton, QButtonGroup
+)
+from matplotlib.backends.backend_qt5agg import (
+    FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
+)
+
 
 matplotlib.rcParams['figure.figsize'] = (10,7)
 matplotlib.rcParams['xtick.labelsize'] = 16
@@ -501,6 +511,63 @@ def make_cmap(max_label, background_color='#000000ff', seed=None):
 def mags(data, zp, scale):
         return zp + 5*np.log10(scale) - 2.5*np.log10(data)
 
+def ellipse_points(center, a, b, angle, num_points=300):
+    """
+    Generate x and y coordinates for an ellipse.
+
+    Parameters:
+    center (tuple): (x, y) coordinates of the ellipse center.
+    a (float): Semimajor axis.
+    b (float): Semiminor axis.
+    angle (float): Rotation angle in degrees.
+    num_points (int): Number of points to generate.
+
+    Returns:
+    tuple: (x, y) coordinates of the ellipse.
+    """
+    theta = np.linspace(0, 2 * np.pi, num_points)
+    x_circle = a * np.cos(theta)
+    y_circle = b * np.sin(theta)
+
+    angle_rad = np.deg2rad(angle)
+    cos_angle = np.cos(angle_rad)
+    sin_angle = np.sin(angle_rad)
+
+    x_ellipse = cos_angle * x_circle - sin_angle * y_circle + center[0]
+    y_ellipse = sin_angle * x_circle + cos_angle * y_circle + center[1]
+
+    return x_ellipse, y_ellipse
+
+def rectangle_add_patches(coords, width, height, ax, **kwargs):
+    ''' Add rectangles patches to axis
+
+    Parameters:
+    ----------
+        coord: array
+            Array of coordinates (x,y) of the center of the rectangles
+        width: float
+            Width of the rectangles in pixels
+        height: float
+            Height of the rectangles in pixels
+        ax: matplotlib axis
+            Axis to add the patches
+    
+    Returns:
+    --------
+        True: bool
+            True if the rectangles were added to the axis
+    '''
+    x = coords[0]
+    y = coords[1]
+    corner_x = x - width/2
+    corner_y = y - height/2
+
+    for cx,cy in zip(corner_x,corner_y):
+        rect = patches.Rectangle((cx,cy),width,height, **kwargs)
+        ax.add_patch(rect)
+    
+    return True
+
 
 def interactive_mask_modify(Image, out=None, scaling = 0.8, screendpi = 100, **kwargs):
 
@@ -598,3 +665,115 @@ def interactive_mask_modify(Image, out=None, scaling = 0.8, screendpi = 100, **k
 
     plt.show()
 
+
+class MaskEditor(QMainWindow):
+    def __init__(self, image, vmin=None, vmax=None):
+        super().__init__()
+        self.setWindowTitle("Mask Editor with Matplotlib & PyQt5")
+        self.image = image
+        self.mask = (self.image.data.mask != 0).astype(np.uint8)
+        self.new_labels = cv2.connectedComponents(self.mask, connectivity=8)[1]
+        self.original_max = self.new_labels.max()
+        self.original_labels = self.new_labels.copy()
+        self.history_labels = []
+        self.mode = 'delete'
+        self.size = 5
+
+        self.main_widget = QWidget(self)
+        self.setCentralWidget(self.main_widget)
+
+        self.fig = Figure()
+        self.canvas = FigureCanvas(self.fig)
+        self.ax = self.fig.add_subplot(111)
+        mag = image.zp - 2.5*np.log10(image.data.data - image.bkg) + 5*np.log10(image.pixel_scale)
+        if vmin is None: vmin = np.nanpercentile(mag, 1)
+        if vmax is None: vmax = np.nanpercentile(mag, 99)
+        self.img_plot = self.ax.imshow(mag, cmap='nipy_spectral', origin='lower', vmin=vmin, vmax=vmax)
+        self.fig.tight_layout()
+        self.fig.colorbar(self.img_plot, ax=self.ax)
+        self.mask_overlay = self.ax.imshow(self.new_labels!=0, cmap=mask_cmap(alpha=0.5), origin='lower')
+
+        self.canvas.mpl_connect('button_press_event', self.on_click)
+
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        self.delete_radio = QRadioButton('Delete', self)
+        self.delete_radio.setChecked(True)
+        self.create_radio = QRadioButton('Create', self)
+        self.radio_group = QButtonGroup(self)
+        self.radio_group.addButton(self.delete_radio)
+        self.radio_group.addButton(self.create_radio)
+        self.radio_group.buttonClicked.connect(self.change_mode)
+
+        self.size_spin = QSpinBox(self)
+        self.size_spin.setMinimum(1)
+        self.size_spin.setMaximum(100)
+        self.size_spin.setValue(self.size)
+        self.size_spin.valueChanged.connect(self.change_size)
+
+        self.undo_btn = QPushButton('Undo', self)
+        self.undo_btn.clicked.connect(self.undo_action)
+
+        self.save_btn = QPushButton('Save Mask', self)
+        self.save_btn.clicked.connect(self.save_mask)
+
+        layout_controls = QHBoxLayout()
+        layout_controls.addWidget(self.delete_radio)
+        layout_controls.addWidget(self.create_radio)
+        layout_controls.addWidget(QLabel('Size:'))
+        layout_controls.addWidget(self.size_spin)
+        layout_controls.addWidget(self.undo_btn)
+        layout_controls.addWidget(self.save_btn)
+
+        main_layout = QVBoxLayout(self.main_widget)
+        main_layout.addWidget(self.toolbar)
+        main_layout.addWidget(self.canvas)
+        main_layout.addLayout(layout_controls)
+
+        self.show()
+
+    def change_mode(self):
+        self.mode = 'delete' if self.delete_radio.isChecked() else 'create'
+
+    def change_size(self):
+        self.size = self.size_spin.value()
+
+    def undo_action(self):
+        if self.history_labels:
+            label = self.history_labels.pop()
+            if label <= self.original_max:
+                self.new_labels[self.original_labels == label] = label
+            else:
+                self.new_labels[self.original_labels == label] = 0
+                self.original_labels[self.original_labels == label] = 0
+            self.update_display()
+
+    def save_mask(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Mask", "", "FITS files (*.fits)")
+        if filename:
+            fits.PrimaryHDU(self.new_labels.astype(np.int32), self.image.header).writeto(filename, overwrite=True)
+
+    def on_click(self, event):
+        if event.inaxes != self.ax:
+            return
+
+        x, y = int(event.xdata), int(event.ydata)
+
+        if self.mode == 'delete':
+            label = self.original_labels[y, x]
+            if label > 0:
+                self.new_labels[self.new_labels == label] = 0
+                self.history_labels.append(label)
+
+        elif self.mode == 'create':
+            aper_mask = CircularAperture([x, y], self.size).to_mask(method='center').to_image(self.image.data.shape)
+            label = int(self.new_labels.max()) + 1
+            self.new_labels[(aper_mask != 0) * (self.new_labels==0)] = label
+            self.original_labels[(aper_mask != 0) * (self.original_labels==0)] = label
+            self.history_labels.append(label)
+
+        self.update_display()
+
+    def update_display(self):
+        self.mask_overlay.set_data(self.new_labels!=0)
+        self.canvas.draw_idle()

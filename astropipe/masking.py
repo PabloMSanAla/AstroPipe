@@ -157,10 +157,10 @@ def sexmask(IMG, folders, fwhm=None, plot=False, temp=False):
 
     Parameters
     ----------
-        IMG : astropipe Image object
+        IMG : astropipe.classes.Image object
             Class object containing the image data
 
-        folders : astropipe Directories object
+        folders : astropipe.classes.Directories object
             Class object containing the directories of the project
 
         fwhm : float, optional
